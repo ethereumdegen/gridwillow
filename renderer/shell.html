@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<!--__STYLE__-->
+<link rel="stylesheet" href="./shell.css">
+<!--__/STYLE__-->
+</head>
+<body>
+
+<div id="app-root"></div>
+
+<div id="nodata">
+  <div class="box">
+    <h1>No blueprint loaded</h1>
+    <p>This is the bare shell. It draws nothing until a blueprint is baked into it or handed to it by the app.</p>
+    <code>bp export infra.bp</code>
+    <p>The result is one self-contained HTML file — no server, no network, no dependencies. Open it straight off disk.</p>
+  </div>
+</div>
+
+<script type="application/json" id="bp-data">__DATA__</script>
+
+<script>
+// If the module never starts at all — the usual cause is opening this file
+// straight from disk while it still references a sibling script — say so,
+// rather than showing an empty window.
+setTimeout(function () {
+  if (!window.__bpStarted) {
+    var el = document.getElementById('nodata');
+    el.classList.add('on');
+    var p = document.createElement('p');
+    p.className = 'err';
+    p.textContent = '/ the renderer did not start — if this is renderer/shell.html '
+                  + 'opened from disk, that is expected: export a blueprint instead.';
+    el.querySelector('.box').appendChild(p);
+  }
+}, 1500);
+</script>
+
+<!--__SCRIPT__-->
+<script type="importmap">{"imports":{"three":"../vendor/three.module.min.js"}}</script>
+<script type="module" src="./entry-inline.js"></script>
+<!--__/SCRIPT__-->
+
+</body>
+</html>

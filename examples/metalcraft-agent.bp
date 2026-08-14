@@ -1,0 +1,1229 @@
+blueprint metalcraft-agent
+  title The Pod
+  tagline >
+    one rust binary that runs an agent as a scoped persona, on a box you own
+  branch feat/pod-drive-share-and-polish
+  stamp v0.29.0 · edition 2024
+
+stat Rust = 28,794 lines · 91 files
+stat Binaries = 2 — cli · daemon
+stat Tools = 54 built-in + 30 app
+stat HTTP routes = 59 on the workshop API
+stat Seeded = 8 personas · 16 skills
+stat Turn ceiling = 90 steps
+
+group ways_in "Ways in"
+  note four doors, one turn primitive
+
+entry cli_repl "CLI" x1.2
+  is the rustyline REPL, one-shot task mode, and the slash commands
+  why >
+    Parses the invocation, creates a diagnostics session, and either runs a
+    single task or loops on a prompt. Slash commands that change persona,
+    model, or working directory rebuild the whole agent, because all three are
+    baked into the system prompt. If stdin is not a TTY it forces auto-approve
+    and demands a one-shot task, so piping into it can never block on a hidden
+    prompt.
+  src src/main.rs src/cli.rs
+  uses rustyline crossterm atty
+  num Slash commands = 6
+
+entry daemon_bin "Daemon"
+  is >
+    the scheduler process — polls flows, fires follow-ups, optionally hosts
+    the API
+  why >
+    A thin binary that delegates straight into daemon::run. Beyond the flow
+    poll it spawns three long-lived side loops: the workshop server when a key
+    is present, the gateway self-heal loop, and the calendar reminder ticker.
+    One process can therefore be the whole product.
+  src src/bin/metalcraft-daemon.rs src/daemon.rs
+  uses tokio
+  num Default poll = 30 s
+
+svc workshop_api "Workshop API" x1.9
+  is >
+    an Axum REST surface over every file the agent reads, plus live chat over
+    SSE
+  why >
+    By far the largest file in the repo at 4,344 lines and 59 routes. It reads
+    and writes the same data-dir files the CLI and daemon use, so an edit made
+    through the API takes effect on the next agent build with no reload step.
+    /health and /info are open; everything else needs a bearer that is either
+    the static workshop key or a Metalcraft ID token verified against the hub.
+  src src/workshop_api.rs src/hub_auth.rs openapi/workshop-api.yaml
+  uses axum utoipa tokio-stream
+  num Routes = 59
+  num Lines = 4,344
+
+svc gateway_ingress "Inbound gateway"
+  is webhook push and long-poll pull, funnelled through one idempotency check
+  why >
+    Messages arrive either as a signed POST to /webhook/gateway or by holding
+    a 25-second long-poll against the gateway's inbound/next. Both paths
+    converge on route_gateway_inbound, which dedupes on the gateway message
+    UUID before running a turn — so the gateway's dual-delivery mode cannot
+    make the agent answer twice. The dedup ledger lives on the pod disk, so a
+    redelivery after a restart is still caught.
+  src src/inbound_dedup.rs src/workshop_api.rs
+  uses hmac sha256
+
+svc channels "Channels"
+  is named outbound connections to a messaging gateway, resolved by slug
+  why >
+    A channel is just { slug, name, url, secret }. There is always a default
+    one pointing at the first-party gateway and authenticated with the pod
+    token the control plane injects, so the common case needs no configuration
+    at all. The connect call fetches the base URL, integration id and webhook
+    secret and registers the pod's inbound webhook in one shot, rather than
+    asking a human to paste anything.
+  src src/channels.rs src/metalcraft_gateway.rs
+  uses reqwest
+
+group the_turn "The turn"
+  note compact, then run the ReAct loop
+
+svc agent_runtime "Agent runtime" x1.3
+  is >
+    assembles persona prompt, tool registry, model and hooks into one compiled
+    graph
+  why >
+    Renders the persona's mustache-style system prompt, resolves its tool
+    names into a registry, builds the OpenAI-compatible model, attaches the
+    approval and LLM hooks, and compiles a ReAct graph. The graph is stored
+    behind an Arc so it can be cloned across turns for free. Any change to
+    persona, model or cwd means calling this again — there is no partial
+    rebuild.
+  src src/runtime.rs
+  uses metalcraft rig
+
+svc turn_runner "Turn runner" x1.6
+  is the single per-turn primitive: compact the context, then run the executor
+  why >
+    This exists because there are three ways to start a turn — the REPL, a
+    workshop or gateway chat, and a one-shot flow task — and a behaviour
+    present in one path used to go silently missing from the others. Folding
+    compaction, the 90-step ceiling and the executor wiring into one place is
+    what stops that. The step guard is passed in per call rather than held,
+    because its lifetime is session-long in the CLI and per-turn in the
+    daemon.
+  src src/runtime.rs
+  num Callers = 3 paths
+
+ext react_graph "ReAct graph" x1.2
+  is the think → call tool → observe loop, provided by the metalcraft crate
+  why >
+    Not code in this repo: the agent graph, executor, tool trait and hook
+    system all come from the metalcraft framework crate. This repo supplies
+    the system prompt, the registry and the hooks, and the framework drives
+    the loop until a final answer or the step ceiling. Treating the loop as a
+    dependency is what keeps the interesting logic here in hooks rather than
+    in a bespoke agent implementation.
+  src src/runtime.rs
+  uses metalcraft rig
+  num Max steps = 90
+
+model llm_client "Model" x1.3
+  is an OpenAI-compatible completion model, gpt-5.4 unless overridden
+  why >
+    Built from a single required environment variable and swapped at runtime
+    by the /model slash command. A second, lighter instance is created
+    separately as the compaction summarizer, so a long conversation is not
+    summarized by the expensive model. Only the API key is mandatory to run
+    the whole product.
+  uses rig openai
+  num Default = gpt-5.4
+
+svc approval_hook "Approval" x1.2
+  is >
+    classifies every tool call into an operation kind, then auto-approves or
+    prompts
+  why >
+    The policy is data, not conditionals: each call maps to an OperationKind
+    which maps to a permission level. Writing a new file is automatic,
+    overwriting an existing one prompts. Crucially, an unrecognised tool
+    classifies as Execute and therefore prompts — it fails safe. Approvals are
+    remembered per session and per path, and the terminal prompt runs on its
+    own OS thread so it never fights rustyline for the terminal or blocks the
+    tokio runtime.
+  src src/approval.rs src/diff_preview.rs
+  num Operation kinds = 11
+
+svc step_guard "Step guard"
+  is watches for error spirals and loops, and prints every call as it happens
+  why >
+    Stops the run after three consecutive all-error tool turns, or after the
+    same tool is called byte-for-byte identically five times in a row. Tools
+    marked as status polls are exempt and get a budget of sixty instead, so
+    polling an async job is not mistaken for a runaway. Calls the user denied
+    are retracted from both tallies, so rejecting something cannot itself trip
+    the guard.
+  src src/guard.rs
+  num Error spiral = 3
+  num Repeat limit = 4
+  num Poll budget = 60
+
+svc compactor "Compaction"
+  is >
+    summarizes old history once the estimated context passes 60% of the window
+  why >
+    Token counting is a deliberately cheap heuristic — roughly four characters
+    per token across all message content — rather than a real tokenizer.
+    Everything but the ten most recent messages is rendered into a transcript,
+    summarized by a lightweight model, and replaced with one assistant
+    message. The split point walks backwards to avoid severing a tool call
+    from its result.
+  src src/context.rs
+  num Window = 128k
+  num Trigger = 60%
+  num Keep = 10 msgs
+
+store diagnostics "Diagnostics & traces"
+  is >
+    per-session JSON snapshots plus an OTLP document following the GenAI
+    conventions
+  why >
+    Two sibling writers sharing one session id, so the directories line up one
+    to one. sessions/ holds bespoke per-turn message dumps and config-change
+    records; traces/ holds a single OpenTelemetry JSON document you can ship
+    to any collector. The workshop API can read both back, which is how you
+    debug a run that happened while nobody was watching.
+  src src/diagnostics.rs src/trace.rs src/diagnostics_browse.rs
+  uses opentelemetry
+
+group toolbox "The toolbox"
+
+svc tool_registry "Tool registry" x1.5
+  is >
+    resolves a persona's tool names, with a four-stage fallthrough for unknown
+    ones
+  why >
+    A persona lists tools by name and the registry matches them. What makes it
+    extensible is what happens on a miss: the name is offered to the native
+    pack tools, then to the pod apps, and finally to a JSON file in
+    api_tools/. That is why adding a GitHub or Linear tool needs no Rust at
+    all. The persona's list is the security boundary — nothing outside it is
+    ever registered.
+  src src/tools/mod.rs
+  num Built-in tools = 54
+
+lib core_tools "Core & delivery" x1.2
+  is >
+    file, shell, search and fetch tools, plus the three that talk back to the
+    user
+  why >
+    read_file, write_file, edit_file, bash, list_files, grep, find_files,
+    web_fetch and load_skill are the hand-written Rust ones. Alongside them
+    sit say_to_user, gateway_send_message and schedule_followup — the delivery
+    tools, which are what make a tool-only session possible: the agent has no
+    stdout, so replying is itself a tool call.
+  src src/tools/
+  uses htmd reqwest
+
+svc http_api_tool "HTTP API tool" x1.2
+  is >
+    one generic Rust tool that becomes any REST call, configured entirely in
+    JSON
+  why >
+    A file in api_tools/ supplies the name, description, method, URL, headers,
+    parameter schema and body mapping; at call time the tool expands path
+    placeholders from the arguments, drops unfilled optional query segments,
+    resolves $ENV_VAR references against the key store, and sends the request.
+    This is how the GitHub, Linear, Cloudflare and Sentry packs work without a
+    line of Rust between them.
+  src src/tools/http_api.rs
+  num Timeout = 30 s
+  num Body truncation = 50k chars
+
+lib meta_tools "Meta tools"
+  is the agent editing its own personas, skills, flows, packs and keys
+  why >
+    persona_*, skill_*, flow_*, pack_*, key_* and diagnostics_* let a running
+    agent rewrite its own configuration — which is exactly why the approval
+    policy splits them: reads are automatic, writes prompt. The config-agent
+    persona exists to use these and little else, so the reflexive capability
+    is scoped rather than ambient.
+  src src/tools/meta_persona.rs src/tools/meta_flow.rs src/tools/meta_skill.rs src/tools/meta_keys.rs
+
+svc sub_agent_tool "Sub-agent"
+  is spawns a nested agent with its own registry, on a 120-second leash
+  why >
+    Takes a task and a tool set — read-only by default, optionally scoped to
+    one pack or to a named persona — then builds a fresh registry and graph
+    and runs them. It returns the child's answer plus which tools it used and
+    how many turns it took, so the parent can see the cost. This is the
+    mechanism behind the default Orchestrator persona, which delegates rather
+    than doing.
+  src src/tools/sub_agent.rs
+  num Timeout = 120 s
+  num Max steps = 90
+
+lib native_integrations "Native integrations"
+  is the integrations that needed real Rust — S3, IMAP mail, Twilio
+  why >
+    Everything that fits a plain REST call lives in JSON instead. These three
+    did not: S3 needs request signing, mail needs an IMAP session and MIME
+    parsing, Twilio needs its own signature scheme. They are registered by
+    pack id rather than individually, so enabling the email pack brings its
+    whole tool family at once.
+  src src/tools/s3.rs src/tools/email_imap.rs src/tools/twilio.rs
+  uses imap mail-parser native-tls
+
+group extending "What you add"
+  note everything here is a file on disk
+
+svc seeder "Seeder"
+  is >
+    writes the bundled personas, skills, packs and flows into the data dir on
+    startup
+  why >
+    Every default is compiled into the binary with include_str! and written
+    out on first run, so a fresh container is immediately useful with no fetch
+    step. It will not clobber a file you have edited — with one exception: a
+    bundled persona carrying a newer version number force-upgrades its
+    installed copy, which is how fixes reach existing pods.
+  src src/seed.rs seed/
+  uses include_dir
+  num Bundled = 8 personas · 16 skills
+
+store persona_store "Personas" x1.4
+  is JSON files defining name, system prompt, allowed tools and skills
+  why >
+    The central idea of the whole project: a request runs as a persona, which
+    is a scoped tool set rather than a blank cheque. The research persona is
+    read-only, the devops persona can touch its own infrastructure and nothing
+    else. The prompt is a template — placeholders for cwd, available skills,
+    sub-agent personas and installed packs are substituted, and any the author
+    left out are appended as fallback sections.
+  src src/persona.rs seed/personas/
+  num Seeded = 8
+
+store skill_store "Skills"
+  is >
+    markdown methodologies a persona loads on demand rather than carrying
+    always
+  why >
+    Each is a file with YAML frontmatter and a body. The persona's skill list
+    becomes an enum in load_skill's parameter schema, so the model can only
+    ask for skills it is actually allowed to have. Keeping them out of the
+    system prompt until requested is what stops sixteen methodologies from
+    eating the context window before the first turn.
+  src src/skill.rs seed/skills/
+  num Seeded = 16
+
+svc integration_packs "Integration packs" x1.3
+  is >
+    a zip of personas, skills and api_tools that installs as one unit and
+    toggles on and off
+  why >
+    A pack manifest carries an id, version and required environment variables;
+    installing one unpacks its parts into the same directories a human would
+    edit. Enable-state is what gates its tools into the registry, and it gates
+    the pod apps too — an app's id matches its pack id on purpose. Every
+    install is also written to metalcraft.lock with a content hash, so a
+    rebuilt pod can replay exactly the same versions instead of drifting to
+    whatever is newest.
+  src src/integration_packs.rs src/lockfile.rs seed/integration_packs/
+  uses zip
+  num Seeded packs = 8
+
+store key_store "Key store"
+  is >
+    named secrets resolved from $NAME placeholders at call time, never at load
+    time
+  why >
+    HTTP tool configs reference credentials as $GITHUB_TOKEN rather than
+    embedding them, and the substitution happens when the request is built.
+    That means a tool definition is safe to read, share, or hand to the model,
+    and rotating a key takes effect on the next call with no reinstall. The
+    API can list keys masked and reveal one explicitly.
+  src src/key_store.rs
+
+ext registries "Registries"
+  is the public pack and flow registries the pod installs from
+  why >
+    Packs arrive as a zip from packs.metalcraftai.com and flows as a single
+    validated JSON document from flows.metalcraftai.com. Both endpoints are
+    public, so no credential is involved in installing. Downloads are
+    size-capped before extraction, and both base URLs are overridable for
+    self-hosting.
+  src src/registry.rs src/flow_install.rs
+
+group daemon "The daemon"
+
+svc poll_loop "Poll loop" x1.3
+  is >
+    every thirty seconds: which flows are due, and which follow-ups have come
+    round
+  why >
+    Loads the enabled flows, asks is_due for each against its schedule and
+    timezone, marks the due ones running and executes them. Cron expressions
+    use the six-field form with seconds and are evaluated in the daemon's
+    local timezone, which is the detail that surprises people — set TZ=UTC if
+    you want UTC. Interval run-state is in memory only, so a restart makes
+    interval flows fire again immediately.
+  src src/daemon.rs
+  uses cron chrono-tz
+  num Default tick = 30 s
+
+store flow_store "Flows"
+  is JSON graphs of nodes and edges, one file each, validated at load
+  why >
+    A flow declares a single entry node carrying the schedule, then a graph of
+    prompt, tool, http, conditional and branch nodes. Validation runs at load
+    time and a bad cron expression simply skips the flow rather than crashing
+    the daemon. Schedule type manual means it is parsed and never auto-run —
+    you trigger it from the API.
+  src src/flows.rs seed/flow_templates/
+  uses metalcraft-flows
+  num Node types = 9
+
+svc flow_exec_v2 "Flow state machine" x1.5
+  is >
+    walks the graph one node at a time, threading variables and routing by
+    output handle
+  why >
+    The second-largest file in the repo. It is a real state machine rather
+    than a script: approval and wait nodes park the run to disk and a later
+    resume picks it up mid-graph, possibly days afterwards. A legacy v1 path
+    still exists for older flows and just breadth-first collects reachable
+    prompt nodes and runs each as a one-shot — the two models are selected per
+    flow, not globally.
+  src src/flow_exec.rs
+  num Lines = 1,800
+
+store flow_runs "Runs"
+  is persisted run state — the reason a paused flow can be resumed at all
+  why >
+    Each run is a document under runs/ holding the current node, the variables
+    object and the pause reason. Without it an approval node would be a hang
+    rather than a pause. This is separate from the interval scheduler's
+    in-memory history, which is deliberately not persisted.
+  src src/flow_runs.rs
+
+queue scheduled_tasks "Follow-ups" x1.2
+  is persisted reminders the agent armed for itself, waiting for their moment
+  why >
+    When the agent calls schedule_followup it writes a task bound to the
+    current session, with a reschedule depth so it cannot arm itself forever.
+    Each daemon tick claims the due ones and replays them into their bound
+    session — a workshop chat or a gateway conversation. This is what lets an
+    agent say it will check back in an hour and actually do it.
+  src src/scheduled_tasks.rs src/tools/schedule_followup.rs
+
+job reminders_job "Calendar reminders"
+  is >
+    a separate ticker over pod-local events, only alive when the calendar pack
+    is on
+  why >
+    Spawned as its own loop rather than folded into the flow poll, because
+    event reminders need a finer cadence than a thirty-second flow tick and
+    should not be delayed by a long-running flow. It reads the calendar app's
+    own SQLite database directly, since both live in the same process.
+  src src/apps/calendar/reminders.rs
+
+group pod_apps "The pod apps"
+  note an OS layer that grew inside the agent
+
+svc app_sdk "App SDK" x1.4
+  is >
+    the OS layer: lends each app a database, a blob namespace, an event hub
+    and an identity
+  why >
+    The ecosystem apps are moving off cloud Postgres and into the user's own
+    pod, running inside this binary against the pod's disk. An app wires into
+    exactly three existing seams — the router, the tool registry fallthrough,
+    and the pack manifest — and never touches the turn loop. Because a managed
+    pod has exactly one owner, no app ever resolves per-request identity; it
+    trusts the process.
+  src src/apps/mod.rs docs/POD_NATIVE_APPS_PLAN.md
+  num Seams touched = 3
+  num Built-in apps = 3
+
+store sqlite_store "SQLite tier" x1.3
+  is one database file per app on the pod's block volume, opened lazily
+  why >
+    Rows, relationships, indexes and full-text search — the hot structured
+    tier. The pool is capped at a single connection and opened lazily, and the
+    library is bundled so a container build needs no system sqlite. It
+    requires a real POSIX filesystem because of WAL, which is the constraint
+    that decided the pod needs a block volume rather than object storage
+    alone.
+  src src/apps/storage.rs
+  uses sqlx sqlite
+  num Pool size = 1
+
+store blob_store "Blob tier"
+  is opaque bytes under string keys — uploads, attachments, exports
+  why >
+    The trait is deliberately S3-shaped even though today's only
+    implementation writes to the local filesystem, so a presigned S3 or R2
+    backend can replace it without any app code changing. Large binaries go
+    here and never into SQLite.
+  src src/apps/blobs.rs
+
+queue event_hub "Event hub"
+  is a per-app broadcast channel driving websocket push to outside clients
+  why >
+    Pod-native apps are backend-only — any UI lives outside the pod — so this
+    exists to tell those clients that something changed. One in-process
+    broadcast ring per app, no Redis and no cross-process fan-out, because a
+    managed pod serves exactly one user. A subscriber that lags past the ring
+    resyncs over REST instead.
+  src src/apps/events.rs
+  uses tokio
+
+svc notes_app "Notes"
+  is flat markdown notes with colour-coded categories, addressed by slug
+  why >
+    No folders by design: one owner holds many notes, each with a slug,
+    organised by at most twelve categories. It ships a portable export format
+    and a sanitized markdown-to-HTML renderer for public share pages, so a
+    shared note is served by the pod itself rather than by a cloud service.
+  src src/apps/notes/
+  uses comrak ammonia
+  num Tools = 7
+
+svc calendar_app "Calendar"
+  is events, guests and invite responses, with its own timezone handling
+  why >
+    The most involved of the three: beyond CRUD it handles guest lists, invite
+    responses pushed back through a webhook, and a reminder ticker of its own.
+    Timezone logic is a dedicated module rather than scattered, because an
+    event is the one thing where getting the offset wrong is immediately
+    visible to a human.
+  src src/apps/calendar/
+  uses chrono-tz
+  num Tools = 13
+
+svc drive_app "Drive"
+  is folders, files, starring and trash, with the bytes in the blob tier
+  why >
+    The newest of the three and the reason the blob tier exists at all —
+    metadata goes to SQLite while contents go to the blob store, which is why
+    the trait was shaped like S3 from the start. Share links register with the
+    coordinator so a neutral public URL can route back to this specific pod.
+  src src/apps/drive/
+  num Tools = 10
+
+ext coordinator "Coordinator"
+  is a neutral relay that maps a share token to whichever pod owns it
+  why >
+    Every call to it is best-effort on purpose. The pod already serves its own
+    share URL, so an unreachable or unconfigured coordinator only means the
+    link is not on the neutral domain — sharing still works. That is the
+    difference between a nicety and a dependency.
+  src src/apps/coordinator.rs docs/COORDINATOR_PLAN.md
+
+# ----------------------------------------------------------------------
+# connections
+# ----------------------------------------------------------------------
+
+cli_repl -call-> seeder "on startup"
+  as e_cli_seed
+  carry seed::ensure_defaults()
+  why >
+    Both binaries do this before anything else, so the data directory always
+    exists and is populated. It is idempotent and cheap enough to run on every
+    boot.
+  vol 0.2
+
+cli_repl -call-> agent_runtime "build the agent"
+  as e_cli_runtime
+  carry >
+    build_agent_runtime(persona, cwd, model, approval_mode, RuntimeOptions)
+  why >
+    Called once at startup and again whenever a slash command changes persona,
+    model or working directory. There is no partial rebuild — the system
+    prompt and tool set are recomputed together.
+  vol 0.4
+
+cli_repl -call-> turn_runner "one REPL line"
+  as e_cli_turn
+  carry state.continue_with(input) → TurnRunner::run(state, step_guard)
+  why >
+    Each non-command line becomes a turn, and the resulting state is kept for
+    the next one. The REPL reuses a single TurnRunner across the whole
+    session, and prints a brief notice on turns where compaction fired.
+  vol 0.9
+
+daemon_bin -spawn-> workshop_api "hosts the API"
+  as e_daemon_api
+  carry tokio::spawn(workshop_api serve on --api-port, default 3002)
+  why >
+    Only when a workshop key is present. This is what lets one process be both
+    the scheduler and the REST surface, which is the normal deployment.
+  vol 0.3
+
+daemon_bin -call-> poll_loop "start polling"
+  as e_daemon_poll
+  carry daemon::run(flows_dir, persona, model, poll_seconds, once)
+  why >
+    The main loop. With --once it makes a single pass and exits, which is how
+    it is tested and how a cron-driven deployment uses it.
+  vol 0.4
+
+daemon_bin -spawn-> reminders_job "tick the calendar"
+  as e_daemon_reminders
+  carry tokio::spawn(apps::calendar::reminders::reminders_loop())
+  why >
+    Spawned unconditionally but inert unless the calendar pack is enabled.
+    Keeping it off the flow tick means a slow flow cannot delay a reminder.
+  vol 0.2
+
+daemon_bin -spawn-> channels "self-heal"
+  as e_daemon_heal
+  carry tokio::spawn(metalcraft_gateway::heal_loop())
+  why >
+    Re-registers the pod's inbound webhook if the gateway has forgotten it, so
+    a pod that was offline reconnects without a human. Best-effort and silent
+    when there is nothing to fix.
+  vol 0.15
+
+workshop_api -call-> turn_runner "chat turn"
+  as e_api_turn
+  carry POST /api/v1/chats/{id}/turn → run_chat_turn
+  why >
+    The same turn primitive the REPL uses, with the reply sink pointed at an
+    SSE stream instead of stdout. Tool events are emitted as they happen so
+    the UI can show the agent working.
+  vol 0.8
+
+workshop_api -data-> gateway_ingress "webhook post"
+  as e_api_ingress
+  carry POST /webhook/gateway with an HMAC signature header
+  why >
+    The push half of inbound delivery. The signature is verified before the
+    body is trusted, and the message is handed straight to the dedup check.
+  vol 0.6
+
+workshop_api -write-> persona_store "edit a persona"
+  as e_api_persona
+  carry GET|PUT|DELETE /api/v1/personas/{slug}
+  why >
+    Writes the same file on disk the agent reads at build time, so the change
+    takes effect the next time the agent is built. There is no reload endpoint
+    because none is needed.
+  vol 0.4
+
+workshop_api -call-> integration_packs "install & toggle"
+  as e_api_packs
+  carry >
+    POST /api/v1/integration-packs/install · PUT
+    /integration-packs/{id}/enabled
+  why >
+    Enabling a pack changes which tools resolve on the next agent build, and
+    which pod apps mount. Disabling is the kill switch for a whole capability.
+  vol 0.3
+
+workshop_api -read-> flow_runs "inspect & resume"
+  as e_api_runs
+  carry GET /api/v1/flow-runs · POST /api/v1/flow-runs/{id}/resume
+  why >
+    How a human answers an approval node that paused days ago. The run
+    document carries everything needed to continue mid-graph.
+  vol 0.3
+
+workshop_api -call-> app_sdk "mount routers"
+  as e_api_apps
+  carry apps::mount_app_routers(router) — nests each enabled app at /apps/<id>
+  why >
+    Apps mount outside the main auth layer and each re-checks the pod bearer
+    itself, so an external client can talk to one app without being handed the
+    whole API.
+  vol 0.4
+
+gateway_ingress -call-> turn_runner "inbound message"
+  as e_ingress_turn
+  carry route_gateway_inbound → run_chat_turn on the bound session
+  why >
+    Fires only after the dedup check passes. Everything downstream is
+    identical to a workshop chat — the session preset is the only thing that
+    differs, and it only decides where the reply goes.
+  vol 0.7
+
+gateway_ingress -read-> channels "long-poll pull"
+  as e_ingress_channels
+  carry GET {gateway}/api/v1/agent/inbound/next?wait=25
+  why >
+    The pull half of inbound delivery, for pods that cannot receive a webhook.
+    Running both at once is safe because the dedup ledger is keyed on the
+    gateway's message UUID.
+
+persona_store -read-> agent_runtime "system prompt"
+  as e_runtime_persona
+  carry persona.build_system_prompt(skills_dir, cwd)
+  why >
+    Placeholders for cwd, available skills, sub-agent personas and installed
+    packs are substituted into the template. Any the author did not use are
+    appended as fallback sections, so a minimal persona still gets a usable
+    prompt.
+
+agent_runtime -call-> tool_registry "resolve tools"
+  as e_runtime_registry
+  carry >
+    tools::create_registry_for_with_config(persona.resolved_tool_names(),
+    ToolConfig)
+  why >
+    The persona's explicit tool list plus whatever its enabled packs
+    contribute. Anything not on that list is never constructed, which is where
+    least privilege actually happens.
+  vol 0.6
+
+agent_runtime -call-> react_graph "compile the graph"
+  as e_runtime_graph
+  carry >
+    create_react_agent_with_options(model, registry, system_prompt,
+    AgentOptions { .. })
+  why >
+    Produces a compiled graph stored behind an Arc so turns can share it
+    cheaply. Rebuilding is the only way to change the prompt or tool set.
+  vol 0.4
+
+turn_runner -call-> compactor "compact first"
+  as e_turn_compact
+  carry context::compact_if_needed(state, CompactionConfig::default())
+  why >
+    Runs before every turn on every path. Putting it here rather than in each
+    caller is what fixed one-shot runs silently skipping compaction.
+  vol 0.8
+
+turn_runner -call-> react_graph "run the executor"
+  as e_turn_graph
+  carry >
+    Executor::new_from_arc(graph).max_steps(90).with_step_guard(g).run(state,
+    "agent")
+  why >
+    Returns Completed, Interrupted or Failed — and all three preserve the
+    conversation state, so a guard stop or a denied approval does not lose the
+    turn. One shared constant sets the step ceiling for every caller.
+  vol 1
+
+react_graph -call-> llm_client "think"
+  as e_graph_llm
+  carry rig CompletionModel::completion(messages, tools)
+  why >
+    The model either answers or emits a tool call. Every request is
+    snapshotted by the LLM-call hook when diagnostics are on.
+  vol 1
+
+react_graph -event-> approval_hook "before tool call"
+  as e_graph_approval
+  carry BeforeToolCallHook → Proceed | Deny(reason)
+  why >
+    Fires on every single tool call. A denial is fed back to the model as the
+    tool result rather than aborting, so it can adapt and try something else.
+  vol 0.9
+
+approval_hook -call-> tool_registry "proceed"
+  as e_approval_registry
+  carry Tool::call(args) once the OperationKind clears
+  why >
+    Only reached for calls that were auto-approved or explicitly allowed. In
+    interactive mode the prompt waits indefinitely rather than timing out into
+    a denial.
+  vol 0.9
+
+react_graph -event-> step_guard "after each step"
+  as e_graph_guard
+  carry StepGuard → GuardAction::Continue | Stop
+  why >
+    Prints the call and its result as the agent runs, and decides whether the
+    run has gone pathological. A Stop surfaces to the caller as an Interrupted
+    outcome with the state intact.
+  vol 0.9
+
+step_guard -write-> diagnostics "turn snapshot"
+  as e_guard_diag
+  carry sessions/<id>/turn_NNN.json — the full message array
+  why >
+    Written after every step when diagnostics are enabled. Together with the
+    config-change records it is enough to reconstruct exactly what the agent
+    saw.
+
+llm_client -write-> diagnostics "call snapshot"
+  as e_llm_diag
+  carry LlmCallHook → sessions/<id> + traces/<id>/otlp-trace.json
+  why >
+    Two writers on one hook: a bespoke JSON snapshot and an OpenTelemetry
+    GenAI span. The trace is the one you can ship to a collector without a
+    translator.
+
+compactor -call-> llm_client "summarise"
+  as e_compact_llm
+  carry >
+    a rig agent with a summarizer preamble over all but the last 10 messages
+  why >
+    A separate lighter model instance, so a long conversation is not
+    summarized at the expensive model's price. The summary replaces the old
+    messages as one assistant turn.
+  vol 0.3
+
+tool_registry -spawn-> core_tools "register built-ins"
+  as e_registry_core
+  carry match name { "read_file" => .., "bash" => .., "web_fetch" => .. }
+  why >
+    The hand-written Rust tools, matched by exact name. A persona that does
+    not name bash simply never has it.
+  vol 0.6
+
+tool_registry -spawn-> meta_tools "register meta"
+  as e_registry_meta
+  carry persona_* skill_* flow_* pack_* key_* diagnostics_*
+  why >
+    The tools that let the agent rewrite its own configuration. Reads
+    auto-approve and writes prompt, which is the whole safety story for
+    self-modification.
+
+tool_registry -spawn-> sub_agent_tool "register"
+  as e_registry_sub
+  carry sub_agent { task, tool_set: read_only | full | all, pack?, persona? }
+  why >
+    Needs the API key, model and system prompt at construction time, because
+    it builds a whole child agent rather than making a call.
+  vol 0.3
+
+tool_registry -spawn-> native_integrations "register by pack"
+  as e_registry_native
+  carry native_pack_tool_names(pack_id) for each enabled pack
+  why >
+    Registered as a family rather than individually, so enabling the email
+    pack brings every email_* tool at once and disabling it removes them all.
+  vol 0.4
+
+tool_registry -call-> app_sdk "claim the name"
+  as e_registry_app
+  carry >
+    apps::try_register_app_tool(registry, unknown) -> Result<ToolRegistry,
+    ToolRegistry>
+  why >
+    Third stage of the fallthrough. The return type is the registry either
+    way, which is how an app takes ownership of a name without the registry
+    knowing anything about apps.
+  vol 0.4
+
+tool_registry -spawn-> http_api_tool "last resort"
+  as e_registry_http
+  carry <data_dir>/api_tools/<name>.json
+  why >
+    Final stage: any name still unclaimed is looked up as a JSON tool
+    definition on disk. This is why most pack tools need no Rust, and why an
+    unknown tool is a missing file rather than a compile error.
+  vol 0.6
+
+http_api_tool -read-> key_store "expand $NAME"
+  as e_http_keys
+  carry $GITHUB_TOKEN in a header or URL, resolved when the request is built
+  why >
+    Late binding on purpose: a tool definition never contains a secret, so it
+    is safe to read, share, or show the model. Rotating a key takes effect on
+    the very next call.
+  vol 0.6
+
+sub_agent_tool -spawn-> react_graph "nested agent"
+  as e_sub_graph
+  carry a child registry + graph, 120 s timeout, max_steps(90)
+  why >
+    The child returns its final answer plus which tools it used and how many
+    turns it took, so the parent can judge the cost. This is the machinery
+    behind the Orchestrator persona, which delegates rather than doing the
+    work itself.
+  vol 0.3
+
+core_tools -read-> skill_store "load a skill"
+  as e_core_skill
+  carry load_skill reads <skills_dir>/<skill>.md and strips the frontmatter
+  why >
+    The parameter schema restricts the skill argument to an enum of exactly
+    the persona's allowed skills, so the model cannot request one it should
+    not have. Loading on demand keeps sixteen methodologies out of the system
+    prompt.
+  vol 0.4
+
+core_tools -write-> scheduled_tasks "arm a follow-up"
+  as e_core_sched
+  carry >
+    schedule_followup { when, text } bound to session_binding +
+    reschedule_depth
+  why >
+    The agent scheduling itself. The depth counter is what stops a follow-up
+    from arming another follow-up forever.
+  vol 0.3
+
+core_tools -call-> channels "send a reply"
+  as e_core_channels
+  carry gateway_send_message → POST {url}/api/v1/messages/send
+  why >
+    In a tool-only session the agent has no stdout, so replying is itself a
+    tool call routed through the session's reply sink. That is why say_to_user
+    is a terminal tool.
+
+seeder -write-> persona_store "write defaults"
+  as e_seed_persona
+  carry include_str! seeds → personas/*.json, version-gated
+  why >
+    Will not overwrite a persona you have edited, unless the bundled copy
+    carries a newer version number. That exception is how fixes reach pods
+    that are already running.
+  vol 0.2
+
+seeder -write-> skill_store "write defaults"
+  as e_seed_skill
+  carry 16 bundled markdown files → skills/
+  why >
+    Written once on first boot and then owned by the user. A fresh container
+    is immediately useful with no network fetch.
+  vol 0.2
+
+seeder -write-> integration_packs "write defaults"
+  as e_seed_packs
+  carry 8 bundled packs → integration_packs/
+  why >
+    The bundled packs cover email and the Metalcraft ecosystem apps.
+    Everything else is installed from the registry at runtime.
+  vol 0.2
+
+integration_packs -read-> registries "download a pack"
+  as e_packs_registry
+  carry GET packs.metalcraftai.com/api/v1/packs/{slug}/download
+  why >
+    Public and unauthenticated, so installing needs no credential. The
+    download is size-capped before extraction, mirroring the cap applied at
+    extract time.
+  vol 0.2
+
+integration_packs -write-> persona_store "unpack"
+  as e_packs_persona
+  carry install_from_zip writes personas/, skills/ and api_tools/ from the zip
+  why >
+    A pack installs into exactly the same directories a human edits by hand,
+    so there is no separate managed namespace to reason about. Each install is
+    also recorded in metalcraft.lock with a content hash.
+  vol 0.3
+
+integration_packs -read-> app_sdk "the on/off switch"
+  as e_packs_sdk
+  carry app.id() == pack.id — enable-state gates the app
+  why >
+    A deliberate identity: a pod app is enabled by enabling its pack, so there
+    is one switch rather than two. Disabling the pack unmounts the routes and
+    removes the tools.
+  vol 0.3
+
+meta_tools -write-> persona_store "persona_write"
+  as e_meta_persona
+  carry persona_write { slug, json } → personas/<slug>.json
+  why >
+    The agent editing its own scope. Classified as a meta-write, so it prompts
+    in interactive mode rather than proceeding quietly.
+  vol 0.3
+
+meta_tools -write-> key_store "key_set"
+  as e_meta_keys
+  carry key_set { name, value } → the pod's key store
+  why >
+    Lets an agent finish configuring an integration it just installed. Listing
+    returns masked values; revealing one is a separate explicit call.
+  vol 0.3
+
+poll_loop -read-> flow_store "who is due"
+  as e_poll_flows
+  carry load_enabled_flows(flows_dir) then is_due(last_started, schedule, tz)
+  why >
+    Every tick, from scratch — so editing a flow file takes effect within
+    thirty seconds with no restart. A flow with an invalid cron expression is
+    skipped rather than crashing the loop.
+  vol 0.7
+
+poll_loop -call-> flow_exec_v2 "run the flow"
+  as e_poll_exec
+  carry flow_exec::run_flow_v2(flow, variables)
+  why >
+    Marked running before it starts, so a long flow is not started twice by
+    the next tick. Legacy v1 flows take a different path that just runs each
+    reachable prompt node in traversal order.
+  vol 0.6
+
+poll_loop -read-> scheduled_tasks "anything due"
+  as e_poll_sched
+  carry run_due_scheduled_tasks — claim, then deliver
+  why >
+    Runs in the same tick as the flow poll. Claiming before running is what
+    stops a slow follow-up from being fired twice.
+
+flow_exec_v2 -write-> flow_runs "persist the run"
+  as e_exec_runs
+  carry <data>/runs/<run_id>.json — current node, variables, pause reason
+  why >
+    Written as the machine advances, which is the only reason an approval or
+    wait node is a pause rather than a hang. A resume picks up mid-graph,
+    possibly days later.
+  vol 0.6
+
+flow_exec_v2 -call-> turn_runner "prompt node"
+  as e_exec_turn
+  carry runtime::run_one_shot_task per prompt node
+  why >
+    A prompt node is a full agent turn with its own persona resolution — the
+    node's persona, else the entry node's, else the daemon's flag. It gets
+    compaction and the step guard like any other turn.
+  vol 0.7
+
+flow_exec_v2 -call-> tool_registry "tool node"
+  as e_exec_tools
+  carry a flow node invoking a registered tool directly
+  why >
+    No model in the loop for these — the flow author picked the tool and the
+    arguments. This is how a flow does deterministic work between the parts
+    that need judgement.
+  vol 0.4
+
+scheduled_tasks -call-> turn_runner "fire"
+  as e_sched_turn
+  carry the follow-up text replayed into its bound session
+  why >
+    Delivered back to whichever session armed it, so the reply lands in the
+    same workshop chat or gateway conversation the user was already in.
+  vol 0.4
+
+reminders_job -read-> calendar_app "due events"
+  as e_reminders_cal
+  carry pod-local events whose reminder time has passed
+  why >
+    Reads the calendar app's SQLite database in-process, with no HTTP hop,
+    because both live in the same binary. That co-location is the point of
+    moving the apps into the pod.
+  vol 0.3
+
+app_sdk -spawn-> notes_app "lend syscalls"
+  as e_sdk_notes
+  carry >
+    AppContext { SqliteStore, BlobStore, AppEventHub, OwnerIdentity, data_dir
+    }
+  why >
+    An app receives its capabilities rather than reaching for them, so its
+    private database and blob namespace are decided by the SDK. Nothing an app
+    does can touch the turn loop.
+  vol 0.4
+
+app_sdk -spawn-> calendar_app "lend syscalls"
+  as e_sdk_cal
+  carry AppContext scoped to <data>/apps/metalcraft-calendar/
+  why >
+    Same context shape as every other app. The private scratch directory is
+    the only filesystem an app is handed.
+  vol 0.4
+
+app_sdk -spawn-> drive_app "lend syscalls"
+  as e_sdk_drive
+  carry AppContext scoped to <data>/apps/metalcraft-drive/
+  why >
+    Drive is the app that actually exercises the blob tier, which is why the
+    tier was designed before it shipped.
+  vol 0.4
+
+notes_app -write-> sqlite_store "rows + search"
+  as e_notes_sql
+  carry <data>/apps/metalcraft-notes/metalcraft-notes.db
+  why >
+    Note bodies, slugs, categories and the full-text index all live in one
+    file. Migrations run on open, so an upgraded binary repairs its own
+    schema.
+  vol 0.6
+
+calendar_app -write-> sqlite_store "events + guests"
+  as e_cal_sql
+  carry <data>/apps/metalcraft-calendar/metalcraft-calendar.db
+  why >
+    Events, guest lists and invite responses. The reminder ticker reads the
+    same file from another task, which the single-connection pool serialises
+    for free.
+
+drive_app -write-> sqlite_store "metadata"
+  as e_drive_sql
+  carry folders, file records, starred and trash state
+  why >
+    Only the metadata — file contents never enter SQLite. That split is the
+    rule the whole storage design is built around.
+  vol 0.4
+
+drive_app -write-> blob_store "file bytes"
+  as e_drive_blob
+  carry BlobStore::put(key, bytes) — LocalBlobStore today
+  why >
+    Deliberately S3-shaped so the local implementation can be swapped for a
+    presigned object store without any app code changing. Uploads, attachments
+    and exports all land here.
+
+notes_app -event-> event_hub "note upserted"
+  as e_notes_events
+  carry tokio broadcast → /ws push
+  why >
+    Lets a note edited in one client appear live in another, even though the
+    pod itself serves no UI. A subscriber that falls behind the ring resyncs
+    over REST instead of receiving a partial history.
+
+drive_app -call-> coordinator "register a share"
+  as e_drive_coord
+  carry { token → this pod, ref } so {coordinator}/p/{token} routes here
+  why >
+    Fire and forget. If the coordinator is unreachable the share still works
+    on the pod's own public URL — it just is not on the neutral domain.
+  vol 0.2
+
+# ----------------------------------------------------------------------
+# narrative
+# ----------------------------------------------------------------------
+
+tab what "What it does"
+
+  h The Pod
+
+  p >
+    This is a self-hosted AI agent that runs on a box you own. One Rust
+    binary, one required environment variable, and no cloud service in the
+    path of a turn. You can drive it as a terminal REPL, as a one-shot
+    command, or as a long-lived daemon that answers HTTP, replies to inbound
+    messages, and fires scheduled workflows.
+
+  p >
+    The organising idea is the {{persona}}. A request does not run as "the
+    agent" with everything available — it runs as [[a named, scoped tool
+    set|persona_store]] with its own system prompt. The research persona is
+    read-only. The devops persona can touch its own infrastructure and nothing
+    else. The default Orchestrator mostly [[delegates|sub_agent_tool]],
+    handing each sub-task to the specialist built for it.
+
+  h What a turn actually is
+
+  p >
+    There are four ways in — the terminal, the scheduler, the REST API, and an
+    inbound message from a messaging gateway — and they all converge on [[one
+    function|turn_runner]]. It compacts the conversation if it has grown too
+    long, then runs a ReAct loop: think, call a tool, observe, repeat, up to
+    ninety steps.
+
+  p >
+    That convergence is not incidental. The comment in the source says it
+    plainly: three separate turn paths meant a behaviour present in one could
+    go silently missing from the others. Compaction used to be skipped on
+    one-shot runs for exactly that reason.
+
+  note >
+    Hover any block for what it does and which files back it. Hover a
+    connector for the concrete thing that crosses it — a function signature, a
+    route, a file path. Highlighted phrases here are live.
+
+  h The two safety rails
+
+  p >
+    Every tool call passes through [[an approval hook|approval_hook]] that
+    classifies it and decides whether to proceed or ask. Writing a new file is
+    automatic; overwriting an existing one asks. An unrecognised tool is
+    treated as a shell command, so it asks — it fails safe rather than open.
+
+  p >
+    After every step, [[a guard|step_guard]] watches for the two ways an agent
+    loop goes wrong: three consecutive turns where every tool errored, or the
+    same call repeated byte-for-byte five times in a row. Tools that are
+    genuinely polls get a much larger budget, so waiting on an async job is
+    not mistaken for a runaway.
+
+  h Everything else is a file
+
+  p >
+    Personas, skills, flows, HTTP tool definitions, packs and keys are all
+    files in a data directory. [[The REST API|workshop_api]] reads and writes
+    those same files, which is why an edit made from a desktop app takes
+    effect on the next agent build with no reload step and no cache to
+    invalidate.
+
+tab how "How it's built"
+
+  h Rust, and three crates it did not write
+
+  p >
+    The agent loop itself is [[a dependency|react_graph]], not code in this
+    repo. The metalcraft framework supplies the graph, the executor, the tool
+    trait and the hook system; rig supplies the model client; metalcraft-flows
+    supplies the workflow data model. What this repo adds is the persona
+    layer, the tools, the approval policy, the flow runtime and the API.
+
+  p >
+    That is a deliberate line. Because the loop is borrowed, all the
+    interesting logic lands in hooks — and hooks are small, testable, and easy
+    to reason about individually.
+
+  h Adding a tool without writing Rust
+
+  p >
+    [[The registry|tool_registry]] matches a persona's tool names against the
+    built-ins, then falls through: native pack tools, then pod apps, then a
+    JSON file in api_tools/. That last stage is [[one generic HTTP
+    tool|http_api_tool]] that reads a definition — method, URL, headers,
+    parameter schema, body mapping — and becomes any REST call.
+
+  p >
+    GitHub, Linear, Cloudflare and Sentry integrations are therefore JSON
+    documents, not code. Credentials never appear in them: a header reads
+    $GITHUB_TOKEN and [[the key store|key_store]] resolves it when the request
+    is built, which means a tool definition is safe to read, share, or hand to
+    the model.
+
+  p >
+    The three integrations that did need real Rust are the ones that could not
+    be a plain REST call — S3 request signing, an IMAP session with MIME
+    parsing, and Twilio's signature scheme.
+
+  h Flows are a state machine, not a script
+
+  p >
+    [[The flow executor|flow_exec_v2]] walks a graph one node at a time,
+    threading a shared variables object and routing by output handle. Approval
+    and wait nodes [[park the run to disk|flow_runs]] and a later resume picks
+    it up mid-graph, possibly days afterwards. Without that persistence an
+    approval node would be a hang rather than a pause.
+
+  p >
+    The scheduler reloads the flow directory from scratch every tick, so
+    editing a flow file takes effect within thirty seconds and a bad cron
+    expression skips one flow instead of crashing the loop. One detail catches
+    people out: cron uses the six-field form with seconds, evaluated in the
+    daemon's local timezone.
+
+  code |
+    cargo run --bin metalcraft-daemon -- --once --auto-approve
+
+  h An operating system grew inside it
+
+  p >
+    The newest and least expected part of this codebase is [[the app
+    SDK|app_sdk]]. The ecosystem apps — notes, calendar, drive — are moving
+    off cloud Postgres and into the user's own pod, running inside this same
+    binary against the pod's disk.
+
+  p >
+    Each app is lent a set of syscalls: [[a private SQLite
+    database|sqlite_store]] for structured state, [[a blob
+    namespace|blob_store]] for bytes, [[a broadcast hub|event_hub]] for
+    pushing changes to clients outside the pod, and an owner identity. It
+    wires into exactly three existing seams — the router, the registry
+    fallthrough, and the pack manifest — and never touches the turn loop.
+
+  p >
+    Two consequences fall straight out of "a pod is one user". No app resolves
+    per-request identity; it trusts the process. And [[the event
+    hub|event_hub]] is a single in-process broadcast channel — no Redis, no
+    cross-process fan-out, no per-user keying.
+
+  ---
+
+  p >
+    The largest file here is [[the REST API|workshop_api]] at 4,344 lines and
+    59 routes — about one line in seven of the whole codebase. That is worth
+    knowing before you go looking for anything.
+
+term "persona" >
+  A JSON file defining an agent's name, system prompt, allowed tool names
+  and skills. A request runs as a persona, so the tool list is the security
+  boundary — anything not named is never constructed.

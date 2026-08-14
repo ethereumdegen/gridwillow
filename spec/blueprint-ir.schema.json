@@ -1,21 +1,33 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ethereumdegen/codebase-blueprint-ai/schema/codeviz.schema.json",
-  "title": "CodeViz Blueprint",
-  "description": "A rigid description of a codebase's architecture, rendered by template/index.html as an animated isometric engineering drawing. This file is the ONLY artifact an LLM authors; the renderer is fixed.",
+  "$id": "https://github.com/ethereumdegen/codebase-blueprint-ai/spec/blueprint-ir.schema.json",
+  "title": "Blueprint IR",
+  "description": "The compiled form of a .bp file: what the renderer draws. Authors write .bp; this is the machine-readable contract between the compiler and the renderer, and the thing to generate against if you are producing blueprints from another tool.",
   "type": "object",
-  "required": ["codeviz", "meta", "groups", "nodes", "edges", "narrative"],
+  "required": [
+    "codeviz",
+    "meta",
+    "groups",
+    "nodes",
+    "edges",
+    "narrative"
+  ],
   "additionalProperties": false,
-
   "properties": {
     "codeviz": {
-      "description": "Protocol version. Must be \"1.0\".",
-      "const": "1.0"
+      "description": "IR version.",
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
     },
-
     "meta": {
       "type": "object",
-      "required": ["repo", "title", "tagline"],
+      "required": [
+        "repo",
+        "title",
+        "tagline"
+      ],
       "additionalProperties": false,
       "properties": {
         "repo": {
@@ -47,7 +59,6 @@
         }
       }
     },
-
     "stats": {
       "type": "array",
       "minItems": 0,
@@ -55,15 +66,25 @@
       "description": "The strip across the top. Facts a reader could not guess. Prefer counts that reveal shape over trivia like file counts.",
       "items": {
         "type": "object",
-        "required": ["label", "value"],
+        "required": [
+          "label",
+          "value"
+        ],
         "additionalProperties": false,
         "properties": {
-          "label": { "type": "string", "minLength": 1, "maxLength": 24 },
-          "value": { "type": "string", "minLength": 1, "maxLength": 34 }
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 34
+          }
         }
       }
     },
-
     "groups": {
       "type": "array",
       "minItems": 1,
@@ -71,12 +92,25 @@
       "description": "Sidebar section headers. Every node belongs to exactly one. Order them so the reader walks the system in the order it actually runs.",
       "items": {
         "type": "object",
-        "required": ["id", "label"],
+        "required": [
+          "id",
+          "label"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "$ref": "#/$defs/slug" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 40 },
-          "order": { "type": "integer", "minimum": 0, "maximum": 99 },
+          "id": {
+            "$ref": "#/$defs/slug"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99
+          },
           "note": {
             "type": "string",
             "maxLength": 120,
@@ -85,33 +119,38 @@
         }
       }
     },
-
     "nodes": {
       "type": "array",
       "minItems": 4,
       "maxItems": 60,
       "description": "Subsystems, not files. Aim for 15-40.",
-      "items": { "$ref": "#/$defs/node" }
+      "items": {
+        "$ref": "#/$defs/node"
+      }
     },
-
     "edges": {
       "type": "array",
       "minItems": 1,
       "maxItems": 160,
       "description": "Real, concrete connections. Every edge must name what actually crosses it.",
-      "items": { "$ref": "#/$defs/edge" }
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
     },
-
     "narrative": {
       "type": "object",
-      "required": ["tabs"],
+      "required": [
+        "tabs"
+      ],
       "additionalProperties": false,
       "properties": {
         "tabs": {
           "type": "array",
           "minItems": 1,
           "maxItems": 4,
-          "items": { "$ref": "#/$defs/tab" }
+          "items": {
+            "$ref": "#/$defs/tab"
+          }
         },
         "glossary": {
           "type": "array",
@@ -119,39 +158,60 @@
           "description": "Terms a reader may not know. Rendered as a dotted-underline term in the panel; hovering shows the definition.",
           "items": {
             "type": "object",
-            "required": ["term", "definition"],
+            "required": [
+              "term",
+              "definition"
+            ],
             "additionalProperties": false,
             "properties": {
-              "term": { "type": "string", "minLength": 1, "maxLength": 60 },
-              "definition": { "type": "string", "minLength": 1, "maxLength": 400 }
+              "term": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "definition": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              }
             }
           }
         }
       }
     }
   },
-
   "$defs": {
     "slug": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{1,47}$",
       "description": "lower_snake_case identifier, 2-48 chars, starts with a letter."
     },
-
     "gridPos": {
       "type": "array",
       "description": "[column, row] on the isometric grid. Integers, may be negative. Omit to let the auto-layout place the node.",
       "minItems": 2,
       "maxItems": 2,
-      "items": { "type": "integer", "minimum": -40, "maximum": 40 }
+      "items": {
+        "type": "integer",
+        "minimum": -40,
+        "maximum": 40
+      }
     },
-
     "node": {
       "type": "object",
-      "required": ["id", "label", "group", "kind", "summary", "detail"],
+      "required": [
+        "id",
+        "label",
+        "group",
+        "kind",
+        "summary",
+        "detail"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/slug" },
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
         "label": {
           "type": "string",
           "minLength": 1,
@@ -163,7 +223,16 @@
           "description": "Must match a groups[].id."
         },
         "kind": {
-          "enum": ["entrypoint", "service", "store", "queue", "model", "library", "external", "job"],
+          "enum": [
+            "entrypoint",
+            "service",
+            "store",
+            "queue",
+            "model",
+            "library",
+            "external",
+            "job"
+          ],
           "description": "Drives geometry and hatching. See PROTOCOL.md for the shape table. Never invent a kind."
         },
         "weight": {
@@ -173,7 +242,9 @@
           "default": 1,
           "description": "Relative visual mass. Use it to say 'this is the big one'. Purely cosmetic."
         },
-        "pos": { "$ref": "#/$defs/gridPos" },
+        "pos": {
+          "$ref": "#/$defs/gridPos"
+        },
         "summary": {
           "type": "string",
           "minLength": 1,
@@ -190,45 +261,172 @@
           "type": "array",
           "maxItems": 8,
           "description": "Repo-relative paths that actually exist. Directories are fine and often better.",
-          "items": { "type": "string", "minLength": 1, "maxLength": 120 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
         },
         "tech": {
           "type": "array",
           "maxItems": 6,
           "description": "Concrete crates/packages/services, lowercase. e.g. [\"tokio\", \"sqlite\"].",
-          "items": { "type": "string", "minLength": 1, "maxLength": 24 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          }
         },
         "metrics": {
           "type": "array",
           "maxItems": 4,
           "items": {
             "type": "object",
-            "required": ["label", "value"],
+            "required": [
+              "label",
+              "value"
+            ],
             "additionalProperties": false,
             "properties": {
-              "label": { "type": "string", "minLength": 1, "maxLength": 20 },
-              "value": { "type": "string", "minLength": 1, "maxLength": 20 }
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              }
             }
           }
         },
         "status": {
-          "enum": ["active", "dormant", "planned"],
+          "enum": [
+            "active",
+            "dormant",
+            "planned"
+          ],
           "default": "active",
           "description": "dormant renders faded with a dashed outline; planned renders as a ghost with no fill."
+        },
+        "details": {
+          "type": "object",
+          "description": "Structured sections shown in the inspector when a block is selected. Written in .bp as `fact`, `list`, `link` and `env` lines.",
+          "additionalProperties": false,
+          "properties": {
+            "facts": {
+              "type": "array",
+              "description": "Labelled values, rendered as a definition table.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "label",
+                  "value"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            },
+            "lists": {
+              "type": "array",
+              "description": "Named enumerations \u2014 table names, indexes, endpoints \u2014 rendered as chips.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "label",
+                  "items"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 80
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "description": "Clickable references \u2014 runbooks, dashboards, docs.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "label",
+                  "url"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "url": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                }
+              }
+            },
+            "env": {
+              "type": "array",
+              "description": "Environment variables this thing requires.",
+              "items": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
         }
       }
     },
-
     "edge": {
       "type": "object",
-      "required": ["id", "from", "to", "kind", "label", "payload", "detail"],
+      "required": [
+        "id",
+        "from",
+        "to",
+        "kind",
+        "label",
+        "payload",
+        "detail"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/slug" },
-        "from": { "$ref": "#/$defs/slug" },
-        "to": { "$ref": "#/$defs/slug" },
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "from": {
+          "$ref": "#/$defs/slug"
+        },
+        "to": {
+          "$ref": "#/$defs/slug"
+        },
         "kind": {
-          "enum": ["data", "call", "event", "read", "write", "spawn"],
+          "enum": [
+            "data",
+            "call",
+            "event",
+            "read",
+            "write",
+            "spawn"
+          ],
           "description": "Drives line style and packet shape. See PROTOCOL.md."
         },
         "label": {
@@ -256,39 +454,63 @@
           "default": 0.5,
           "description": "How busy this path is relative to the others. Drives packet count and speed."
         },
-        "bidirectional": { "type": "boolean", "default": false },
+        "bidirectional": {
+          "type": "boolean",
+          "default": false
+        },
         "waypoints": {
           "type": "array",
           "maxItems": 6,
           "description": "Optional manual routing points. Omit unless a line is genuinely tangled.",
-          "items": { "$ref": "#/$defs/gridPos" }
+          "items": {
+            "$ref": "#/$defs/gridPos"
+          }
         }
       }
     },
-
     "tab": {
       "type": "object",
-      "required": ["id", "label", "blocks"],
+      "required": [
+        "id",
+        "label",
+        "blocks"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/slug" },
-        "label": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
         "blocks": {
           "type": "array",
           "minItems": 1,
           "maxItems": 60,
-          "items": { "$ref": "#/$defs/block" }
+          "items": {
+            "$ref": "#/$defs/block"
+          }
         }
       }
     },
-
     "block": {
       "type": "object",
-      "required": ["type", "text"],
+      "required": [
+        "type",
+        "text"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": ["h", "p", "note", "code", "rule"],
+          "enum": [
+            "h",
+            "p",
+            "note",
+            "code",
+            "rule"
+          ],
           "description": "h = section heading, p = paragraph, note = indented aside, code = monospace block, rule = horizontal divider (text ignored)."
         },
         "text": {

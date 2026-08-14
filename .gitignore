@@ -1,7 +1,8 @@
+target/
 node_modules/
 .DS_Store
 
-# Built blueprints are artifacts — except the ones in examples/, which are
-# committed on purpose so the repo can be browsed without running anything.
+# built artifacts — the .bp file is the source
+app/dist/
 *.blueprint.html
 !examples/*.blueprint.html

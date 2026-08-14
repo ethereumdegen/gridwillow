@@ -1,118 +1,152 @@
 # codebase-blueprint-ai
 
-Point a language model at a repository. Get back an animated isometric engineering
-drawing of its architecture, as one self-contained HTML file.
+**Mermaid, but three-dimensional, for software infrastructure.**
+
+Write a `.bp` file describing your servers, databases, queues and the data that
+moves between them. Get back an animated isometric engineering drawing you can
+pan, hover and click through — with a full inspector panel behind every block.
 
 ![the drawing](docs/preview.png)
 
-The model does not write HTML, CSS, or three.js. It writes **one JSON file**, and a
-fixed renderer prints it. That split is the whole idea: two blueprints of two different
-systems can be read side by side, because a laminated slab means *store* in both of
-them and a ribbed stack means *queue* in both of them.
+```
+db orders "Orders" x1.4
+  is    the ledger — every authorisation, capture and refund
+  why >
+    Postgres, single writer, replicas for reads. It is the only store in
+    the system allowed to be the source of truth.
+  fact  Engine  = Postgres 16
+  list  Tables  = orders, order_items, captures, refunds
+  link  Runbook = https://wiki/runbooks/orders-db
+  env   DATABASE_URL PGBOUNCER_HOST
+
+checkout -write-> orders "the authorisation"
+  carry INSERT INTO orders (id, cart_id, state, amount_cents)
+  why   Written before the processor is called, never after. If the process
+        dies between the two, reconciliation finds the orphan by state.
+  vol   0.8
+```
 
 ---
 
 ## Use it
 
 ```bash
-# 1. hand PROMPT.md and a checked-out repo to a model with file access
-#    -> it writes my-repo.codeviz.json
+cargo install --path crates/blueprint-cli    # the `bp` binary
 
-# 2. check it
-node scripts/validate.mjs my-repo.codeviz.json
-
-# 3. bake it
-node scripts/build.mjs my-repo.codeviz.json
-
-# 4. open my-repo.blueprint.html
+bp check  infra.bp        # every problem at once, with line and column
+bp export infra.bp        # one self-contained HTML file
+bp fmt    infra.bp --write
 ```
 
-No install, no `node_modules`, no dev server, no network. Node 18+ is the only
-requirement, and only for the build step — the output itself is a single HTML file that
-opens straight off disk.
-
-Try it on the repo that describes itself, or on a real one:
+Or open it in the app, which redraws every time you save:
 
 ```bash
-node scripts/build.mjs examples/self.codeviz.json              && open examples/self.blueprint.html
-node scripts/build.mjs examples/metalcraft-agent.codeviz.json  && open examples/metalcraft-agent.blueprint.html
+cd app && cargo tauri dev
 ```
 
-`examples/metalcraft-agent.codeviz.json` was produced by running `PROMPT.md` against
-[metalcraft-agent](https://github.com/rust4ai/metalcraft-agent) — 39 subsystems, 63
-connections, every claimed source path verified to exist.
+Try the repo describing itself, or a real 39-block system:
+
+```bash
+bp export examples/self.bp
+bp export examples/metalcraft-agent.bp
+```
 
 ## What you get
 
-- **Isometric field of extruded blocks.** Shape encodes kind — eight kinds, closed set.
-  Height and footprint scale with declared weight.
+- **An isometric field of extruded blocks.** Eight shapes, closed set — but many
+  words for each, so you write `db`, `topic`, `lb`, `cron`, whatever the thing is.
 - **Orthogonal connectors** with chamfered corners, six line styles, and travelling
-  data packets whose density tracks declared traffic.
-- **Hover a block** → what the subsystem does, which files back it, what it is built
-  with, how many connections touch it.
-- **Hover a connector** → both endpoints, the concrete payload that crosses it, when it
-  fires, what happens when it fails. Its packets speed up so you can see which line
-  you're reading.
-- **Sidebar index** of every block under its group, with connection counts. Click to
-  fly the camera.
-- **Narrative panel** in tabs, with highlighted phrases wired to the blocks. Hover a
-  phrase and its block lights up in the drawing, and vice versa.
+  packets whose density tracks the traffic you declared.
+- **Hover a block** → what it is, what backs it, how many connections touch it.
+- **Hover a connector** → both endpoints and the concrete payload that crosses it.
+  Its packets speed up so you can see which line you're reading.
+- **Click a block** → the inspector: facts, table names, env vars, source paths,
+  runbook links, and every connection in and out — each one clickable to walk the
+  graph.
+- **A narrative panel** whose highlighted phrases are wired to the blocks. Hover a
+  phrase and its block lights up, and the reverse.
 
-Controls: drag to pan, scroll to zoom, `Q`/`E` to rotate ninety degrees, `F` to fit,
-`L` to toggle labels, `Esc` to clear.
+Controls: drag to pan, scroll to zoom, `Q`/`E` to rotate ninety degrees, `F` to
+fit, `L` for labels, `Esc` to deselect.
 
-## Layout of this repo
+## How it fits together
 
 ```
-PROMPT.md                    the prompt — hand this to the model
-PROTOCOL.md                  field reference, shape table, layout notes
-schema/codeviz.schema.json   the authority (JSON Schema draft 2020-12)
-scripts/validate.mjs         structure + cross-reference + prose checks, 0 deps
-scripts/build.mjs            bake JSON into one self-contained HTML
-template/index.html          the shell
-template/style.css           the chrome
-template/renderer.js         the drawing — fixed, never regenerated
-vendor/three.module.min.js   pinned r169, checked in on purpose
-examples/self.codeviz.json   this repo describing itself
+       you (or a model)                fixed machinery
+    ┌────────────────────┐   ┌──────────────────────────────────┐
+    │  infra.bp          │──▶│ blueprint-dsl   parse → compile  │
+    │  the only file     │   │      │                           │
+    │  anyone authors    │   │      ▼                           │
+    └────────────────────┘   │    IR (JSON)                     │
+                             │      │                           │
+                             │      ├──▶ renderer/  three.js    │
+                             │      │      ├─ bp export → .html │
+                             │      │      └─ Blueprint.app     │
+                             │      └──▶ spec/*.schema.json     │
+                             └──────────────────────────────────┘
 ```
+
+| path | what it is |
+|---|---|
+| `PROMPT.md` | hand this to a model with a repo; it writes the `.bp` |
+| `PROTOCOL.md` | the language reference — read this one |
+| `spec/blueprint.ebnf` | the formal grammar |
+| `spec/blueprint-ir.schema.json` | the compiled IR the renderer consumes |
+| `crates/blueprint-dsl/` | parser, compiler, formatter, HTML exporter |
+| `crates/blueprint-cli/` | the `bp` binary |
+| `renderer/` | the drawing — one implementation, shared by app and export |
+| `app/` | the Tauri viewer with live reload |
+| `vendor/` | three.js r169, pinned and checked in on purpose |
+| `examples/` | this repo, and a real 39-block Rust service |
 
 ## Design notes
 
-**The contract does the enforcing.** Every field has a length limit, every enum is
-closed, and `additionalProperties` is false throughout — a misspelled key is an error
-rather than data that quietly vanishes. The validator then re-checks by hand the things
-a schema cannot see: that both endpoints of every connection resolve, that every
-bracketed phrase in the narrative points at a node that exists, that nothing is left
-unwired. It also nags about quality — a `payload` of just `"data"` is a warning, a
-one-sentence hover detail is a warning, marketing adjectives in the tagline are a
-warning. None of those block a build.
+**The file is the product.** HTML is one renderer of it, the app is another.
+Everything downstream of the `.bp` is fixed machinery that behaves identically
+for every file it is ever handed — which is why two blueprints of two different
+systems can be read side by side. A laminated slab means *store* in both.
 
-**The camera does not orbit.** Orthographic, pinned to the `(1,1,1)` axis — exactly the
-classic isometric elevation. Pan, zoom, and ninety-degree snaps are the entire control
-set. The moment you can tumble to an arbitrary angle, the thing stops reading as an
-engineering drawing and starts reading as a 3D toy.
+**Indentation means nothing.** Every construct is one line starting with a
+keyword, and a declaration owns the attribute lines after it. The most common
+way a generated file goes wrong is inconsistent indentation, and it costs
+nothing to be immune. The one exception is block scalars (`>` and `|`), which
+follow YAML's convention.
 
-**No lights.** Faces are flat-coloured to fake the shading, which keeps every edge
-crisp at any zoom and makes the render cost trivial. Hatching is drawn procedurally
-into canvas textures at startup, so the output carries no image assets.
+**Errors point at lines.** `bp check` reports everything at once with a caret
+under the column and a suggestion underneath. The app is more forgiving still: a
+file that stops parsing keeps the last good drawing on screen with the errors
+over it, because blanking the window on every half-typed line makes a
+live-reload loop useless.
 
-**Deterministic.** No `Math.random`, no clock-seeded values. Same JSON, same drawing —
-so you can edit one node, rebuild, and diff what moved.
+**The camera does not orbit.** Orthographic, pinned to the `(1,1,1)` axis —
+exactly the classic isometric elevation. Pan, zoom, and ninety-degree snaps are
+the entire control set. The moment you can tumble to an arbitrary angle, it
+stops reading as an engineering drawing and starts reading as a 3D toy.
 
-**three.js is vendored, not fetched.** Pinned at r169 and embedded in every output as a
-base64 data URL inside an import map, which resolves under `file://` where a relative
-module import would be blocked by CORS. It costs about 660 KB per file and buys a
-deliverable that still renders identically on a laptop with no internet in five years.
+**No lights.** Faces are flat-coloured to fake the shading, which keeps every
+edge crisp at any zoom and makes the render cost trivial. Hatching is drawn
+procedurally into canvas textures at startup, so nothing ships as an image.
 
-## Editing a blueprint by hand
+**Deterministic.** No `Math.random`, no clock-seeded values. Same file, same
+drawing — so you can change one block, save, and diff what moved.
 
-The JSON is the source. If the model got a detail wrong, fix the JSON and rebuild —
-it takes under a second. Common manual touches:
+**three.js is vendored, not fetched.** Pinned at r169 and embedded in every
+export as a base64 data URL inside an import map, which resolves under `file://`
+where a relative module import would be blocked by CORS. It costs about 660 KB
+per file and buys a deliverable that still renders identically, offline, in five
+years.
 
-- `weight` to emphasise the blocks that matter
-- `pos: [col, row]` to move a block the auto-layout put somewhere silly
-- `waypoints` to untangle a specific connector
-- `status: "dormant"` for code that exists but is not switched on
+## Building the app
+
+Needs the Rust toolchain and the Tauri CLI (`cargo install tauri-cli --version '^2'`).
+
+```bash
+cd app && cargo tauri dev      # run it
+cd app && cargo tauri build    # a .app / .dmg
+```
+
+The webview assets are assembled from `renderer/` by `app/src-tauri/build.rs`, so
+there is one renderer and it cannot drift from what `bp export` produces.
 
 ## Licence
 
