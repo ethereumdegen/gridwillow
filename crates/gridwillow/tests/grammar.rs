@@ -3,7 +3,7 @@
 //! Every test here is either a rule from the spec or a bug that got through
 //! once. The bug ones are named for what broke.
 
-use blueprint_dsl::{build_lossy, parse};
+use gridwillow::{build_lossy, parse};
 
 /// A minimal document that compiles clean, so tests can add one thing to it.
 fn base(extra: &str) -> String {
@@ -284,10 +284,10 @@ fn structured_details_reach_the_ir() {
 fn formatting_is_idempotent_and_meaning_preserving() {
     let src = base("");
     let (doc, _) = parse::parse(&src);
-    let once = blueprint_dsl::emit::emit(&doc);
+    let once = gridwillow::emit::emit(&doc);
     let (doc2, r2) = parse::parse(&once);
     assert!(!r2.has_errors(), "formatted output does not re-parse");
-    let twice = blueprint_dsl::emit::emit(&doc2);
+    let twice = gridwillow::emit::emit(&doc2);
     assert_eq!(once, twice, "formatting is not idempotent");
     assert_eq!(build_lossy(&src).ir, build_lossy(&once).ir, "formatting changed the meaning");
 }

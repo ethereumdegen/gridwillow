@@ -1,6 +1,8 @@
-# codebase-blueprint-ai
+<h1>Gridwillow</h1>
 
-**Mermaid, but three-dimensional, for software infrastructure.**
+**A 3D diagram language for software architecture.** Mermaid, with depth.
+
+[gridwillow.com](https://gridwillow.com)
 
 Write a `.bp` file describing your servers, databases, queues and the data that
 moves between them. Get back an animated isometric engineering drawing you can
@@ -31,7 +33,7 @@ checkout -write-> orders "the authorisation"
 ## Use it
 
 ```bash
-cargo install --path crates/blueprint-cli    # the `bp` binary
+cargo install --path crates/gridwillow-cli   # the `bp` binary
 
 bp check  infra.bp        # every problem at once, with line and column
 bp export infra.bp        # one self-contained HTML file
@@ -47,8 +49,9 @@ cd app && cargo tauri dev
 Try the repo describing itself, or a real 39-block system:
 
 ```bash
-bp export examples/self.bp
-bp export examples/metalcraft-agent.bp
+bp export examples/payments.bp           # a payments platform, 16 blocks
+bp export examples/metalcraft-agent.bp   # a real Rust service, 39 blocks
+bp export examples/self.bp               # this repo, describing itself
 ```
 
 ## What you get
@@ -74,14 +77,14 @@ fit, `L` for labels, `Esc` to deselect.
 ```
        you (or a model)                fixed machinery
     ┌────────────────────┐   ┌──────────────────────────────────┐
-    │  infra.bp          │──▶│ blueprint-dsl   parse → compile  │
+    │  infra.bp          │──▶│ gridwillow      parse → compile  │
     │  the only file     │   │      │                           │
     │  anyone authors    │   │      ▼                           │
     └────────────────────┘   │    IR (JSON)                     │
                              │      │                           │
                              │      ├──▶ renderer/  three.js    │
                              │      │      ├─ bp export → .html │
-                             │      │      └─ Blueprint.app     │
+                             │      │      └─ Gridwillow.app    │
                              │      └──▶ spec/*.schema.json     │
                              └──────────────────────────────────┘
 ```
@@ -92,12 +95,13 @@ fit, `L` for labels, `Esc` to deselect.
 | `PROTOCOL.md` | the language reference — read this one |
 | `spec/blueprint.ebnf` | the formal grammar |
 | `spec/blueprint-ir.schema.json` | the compiled IR the renderer consumes |
-| `crates/blueprint-dsl/` | parser, compiler, formatter, HTML exporter |
-| `crates/blueprint-cli/` | the `bp` binary |
+| `crates/gridwillow/` | parser, compiler, formatter, HTML exporter |
+| `crates/gridwillow-cli/` | the `bp` binary |
 | `renderer/` | the drawing — one implementation, shared by app and export |
 | `app/` | the Tauri viewer with live reload |
+| `site/` | gridwillow.com — a static page and a zero-dependency server |
 | `vendor/` | three.js r169, pinned and checked in on purpose |
-| `examples/` | this repo, and a real 39-block Rust service |
+| `examples/` | a payments platform, a real Rust service, and this repo |
 
 ## Design notes
 
@@ -147,6 +151,24 @@ cd app && cargo tauri build    # a .app / .dmg
 
 The webview assets are assembled from `renderer/` by `app/src-tauri/build.rs`, so
 there is one renderer and it cannot drift from what `bp export` produces.
+
+## The site
+
+`site/` is gridwillow.com: one static page, one exported blueprint running live in
+the hero, and a dependency-free Node server so Railway can boot it with no install
+step.
+
+```bash
+cd site && npm start        # http://localhost:3000
+```
+
+Deploying to Railway needs no configuration beyond the repo — `railway.json` sets
+the start command and nixpacks does the rest. To refresh the hero after editing
+the sample:
+
+```bash
+bp export examples/payments.bp -o site/payments.blueprint.html
+```
 
 ## Licence
 

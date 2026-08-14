@@ -32,7 +32,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shell_src.display());
     let shell = fs::read_to_string(&shell_src).expect("read shell.html");
     let shell = shell
-        .replace("__TITLE__", "Blueprint")
+        .replace("__TITLE__", "Gridwillow")
         // no data is baked in; Rust pushes it over an event instead
         .replace("__DATA__", "null")
         .replace(

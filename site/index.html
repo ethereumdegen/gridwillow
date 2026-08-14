@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gridwillow — a 3D diagram language for software architecture</title>
+<meta name="description" content="Gridwillow is a small text language for describing software systems — servers, databases, queues and the data between them — and a renderer that draws them as animated isometric blueprints you can hover and click through.">
+
+<meta property="og:title" content="Gridwillow">
+<meta property="og:description" content="A 3D diagram language for software architecture. Write a text file, get a blueprint.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gridwillow.com">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23111'/><path d='M8 19l8-4.5 8 4.5-8 4.5z' fill='%23cdc499'/><path d='M8 19v-4l8-4.5 8 4.5v4' fill='none' stroke='%23cdc499' stroke-width='1.6'/></svg>">
+
+<style>
+  :root {
+    --ink:        #111111;
+    --ink-2:      #3d3d3d;
+    --muted:      #6e6e6e;
+    --faint:      #8f8f8f;
+    --cream:      #f3f1ec;
+    --cream-2:    #eae7e0;
+    --line:       #e3e0d8;
+    --white:      #ffffff;
+    --frame:      #0a0a0a;
+    --green:      #4a9d5f;
+    --blueprint:  #cdc499;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --pad: clamp(20px, 5vw, 72px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--frame);
+    font-family: var(--sans);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .sheet {
+    background: var(--cream);
+    max-width: 1240px;
+    margin: 0 auto;
+    position: relative;
+    overflow: hidden;
+  }
+  .sheet + .sheet { border-top: 1px solid var(--line); }
+
+  /* the warm bloom in the lower left, straight off the reference */
+  .hero::after {
+    content: "";
+    position: absolute;
+    left: -10%;
+    bottom: -30%;
+    width: 70%;
+    height: 80%;
+    background: radial-gradient(closest-side, rgba(244, 216, 199, .75), rgba(244, 216, 199, 0));
+    pointer-events: none;
+    z-index: 0;
+  }
+  .hero > * { position: relative; z-index: 1; }
+
+  /* ---------- nav ---------- */
+
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px var(--pad);
+    border-bottom: 1px solid var(--line);
+  }
+  .word {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 15.5px;
+    font-weight: 640;
+    letter-spacing: -.01em;
+    text-decoration: none;
+    color: var(--ink);
+  }
+  .word svg { display: block; }
+  .navlinks { display: flex; align-items: center; gap: 26px; }
+  .navlinks a {
+    font-size: 13.5px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .12s;
+  }
+  .navlinks a:hover { color: var(--ink); }
+
+  /* ---------- hero ---------- */
+
+  .hero { padding: clamp(46px, 8vw, 92px) var(--pad) clamp(34px, 5vw, 56px); }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 15px 7px 12px;
+    font-size: 10.5px;
+    font-weight: 620;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(74, 157, 95, .16);
+  }
+
+  h1 {
+    margin: 26px 0 0;
+    font-size: clamp(40px, 7.4vw, 86px);
+    line-height: .98;
+    font-weight: 780;
+    letter-spacing: -.035em;
+    max-width: 15ch;
+  }
+  h1 .dim { color: #b9b4a8; }
+
+  .lede {
+    margin-top: 26px;
+    max-width: 62ch;
+    font-size: clamp(15.5px, 1.35vw, 18px);
+    line-height: 1.62;
+    color: var(--muted);
+  }
+  .lede strong { color: var(--ink-2); font-weight: 560; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 34px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 13px 19px;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 580;
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: transform .1s, background .15s, border-color .15s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-dark { background: var(--ink); color: #fff; }
+  .btn-dark:hover { background: #262626; }
+  .btn-light { background: var(--white); color: var(--ink); border-color: var(--line); }
+  .btn-light:hover { border-color: #c9c5ba; }
+  .btn .arr { font-size: 12px; opacity: .55; }
+
+  /* ---------- stat strip ---------- */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin-top: 46px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stats div { padding: 20px 22px; border-right: 1px solid var(--line); }
+  .stats div:last-child { border-right: 0; }
+  .stats b {
+    display: block;
+    font-size: clamp(22px, 2.4vw, 30px);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    line-height: 1.05;
+  }
+  .stats span {
+    display: block;
+    margin-top: 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* ---------- the live blueprint ---------- */
+
+  .show { padding: clamp(30px, 4vw, 44px) var(--pad) clamp(46px, 6vw, 72px); }
+
+  .frame {
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    overflow: hidden;
+    background: var(--blueprint);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 14px 40px -18px rgba(0,0,0,.28);
+  }
+  .frame-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--white);
+    border-bottom: 1px solid var(--line);
+  }
+  .lamps { display: flex; gap: 6px; }
+  .lamps i { width: 9px; height: 9px; border-radius: 50%; background: #ddd9d0; display: block; }
+  .frame-name {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .frame-hint {
+    margin-left: auto;
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .frame iframe {
+    display: block;
+    width: 100%;
+    height: min(74vh, 760px);
+    border: 0;
+    background: var(--blueprint);
+  }
+  .cap {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--faint);
+    text-align: center;
+  }
+  .cap code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* ---------- sections ---------- */
+
+  section.band { padding: clamp(54px, 7vw, 96px) var(--pad); }
+
+  .eyebrow {
+    font-size: 10.5px;
+    font-weight: 640;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  h2 {
+    margin-top: 16px;
+    font-size: clamp(27px, 3.6vw, 44px);
+    line-height: 1.06;
+    font-weight: 720;
+    letter-spacing: -.028em;
+    max-width: 19ch;
+  }
+  .sub {
+    margin-top: 18px;
+    max-width: 58ch;
+    font-size: 16px;
+    line-height: 1.66;
+    color: var(--muted);
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1.05fr .95fr;
+    gap: clamp(28px, 4vw, 60px);
+    align-items: start;
+    margin-top: 44px;
+  }
+
+  pre {
+    background: #14140f;
+    color: #e8e3cf;
+    border-radius: 12px;
+    padding: 22px 22px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.72;
+    overflow-x: auto;
+  }
+  pre .k  { color: #d9cf88; }   /* keyword       */
+  pre .id { color: #9fd6b0; }   /* identifier    */
+  pre .s  { color: #eae6d4; }   /* quoted label  */
+  pre .c  { color: #7c775f; }   /* comment       */
+  pre .a  { color: #b8b39a; }   /* attribute     */
+  pre .v  { color: #cfc9ae; }   /* value         */
+
+  .notes { display: flex; flex-direction: column; gap: 26px; padding-top: 6px; }
+  .note h3 {
+    font-size: 16px;
+    font-weight: 640;
+    letter-spacing: -.012em;
+    margin-bottom: 7px;
+  }
+  .note p { font-size: 14.5px; line-height: 1.66; color: var(--muted); }
+  .note code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--cream-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--ink-2);
+  }
+
+  /* ---------- three columns ---------- */
+
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    margin-top: 48px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    overflow: hidden;
+  }
+  .col { background: var(--cream); padding: 30px 28px 34px; }
+  .col .n {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--faint);
+    letter-spacing: .06em;
+  }
+  .col h3 {
+    margin: 12px 0 10px;
+    font-size: 19px;
+    font-weight: 660;
+    letter-spacing: -.018em;
+  }
+  .col p { font-size: 14.5px; line-height: 1.66; color: var(--muted); }
+
+  .shapes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 18px; }
+  .shapes span {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 3px 7px;
+    color: var(--ink-2);
+  }
+
+  /* ---------- quickstart ---------- */
+
+  .start { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(28px, 4vw, 60px); margin-top: 42px; align-items: start; }
+  .steps { display: flex; flex-direction: column; gap: 22px; }
+  .step { display: flex; gap: 15px; }
+  .step .num {
+    flex: 0 0 auto;
+    width: 25px; height: 25px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 620;
+    display: grid;
+    place-items: center;
+  }
+  .step h3 { font-size: 15.5px; font-weight: 620; margin-bottom: 5px; }
+  .step p { font-size: 14px; line-height: 1.6; color: var(--muted); }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    padding: 40px var(--pad) 52px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  footer p { font-size: 13px; color: var(--faint); }
+  footer a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  footer a:hover { color: var(--ink); }
+  .flinks { display: flex; gap: 22px; }
+
+  @media (max-width: 900px) {
+    .split, .start { grid-template-columns: 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stats div:nth-child(2) { border-right: 0; }
+    .stats div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    .navlinks a.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sheet hero">
+
+  <nav>
+    <a class="word" href="/">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#111"/>
+        <path d="M8 19l8-4.5 8 4.5-8 4.5z" fill="#cdc499"/>
+        <path d="M8 19v-4l8-4.5 8 4.5v4" fill="none" stroke="#cdc499" stroke-width="1.6"/>
+      </svg>
+      Gridwillow
+    </a>
+    <div class="navlinks">
+      <a href="#language" class="hide-sm">Language</a>
+      <a href="#how" class="hide-sm">How it works</a>
+      <a href="#start">Install</a>
+      <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
+    </div>
+  </nav>
+
+  <header class="hero-inner" style="padding-top:0">
+    <span class="pill"><span class="dot"></span>Open source · A diagram language</span>
+
+    <h1>Your architecture,<br>drawn in three<br>dimensions.</h1>
+
+    <p class="lede">
+      Gridwillow is a small text language for describing software systems — services,
+      databases, queues, and the data that actually moves between them. Write a plain
+      file, get an isometric blueprint you can pan, hover and click through.
+      <strong>Mermaid, if Mermaid had depth and a reason to be looked at twice.</strong>
+    </p>
+
+    <div class="cta">
+      <a class="btn btn-dark" href="https://github.com/ethereumdegen/gridwillow">View on GitHub <span class="arr">↗</span></a>
+      <a class="btn btn-light" href="#language">Read the language</a>
+    </div>
+
+    <div class="stats">
+      <div><b>8</b><span>Block shapes</span></div>
+      <div><b>6</b><span>Connection kinds</span></div>
+      <div><b>1 file</b><span>In · one file out</span></div>
+      <div><b>Zero</b><span>Runtime dependencies</span></div>
+    </div>
+  </header>
+</div>
+
+<div class="sheet">
+  <div class="show">
+    <div class="frame">
+      <div class="frame-bar">
+        <div class="lamps"><i></i><i></i><i></i></div>
+        <span class="frame-name">payments.bp</span>
+        <span class="frame-hint">drag to pan · scroll to zoom · click a block</span>
+      </div>
+      <iframe src="./payments.blueprint.html" title="A live Gridwillow blueprint of a payments platform" loading="lazy"></iframe>
+    </div>
+    <p class="cap">
+      A real blueprint, running. Generated from <code>examples/payments.bp</code> — 16 blocks, 19 connections, one text file.
+    </p>
+  </div>
+</div>
+
+<div class="sheet" id="language">
+  <section class="band">
+    <span class="eyebrow">The language</span>
+    <h2>Write this. Get that.</h2>
+    <p class="sub">
+      Every construct is one line beginning with a keyword. Indentation is decorative,
+      so a mis-indented file still parses. A <code style="font-family:var(--mono);font-size:14px">group</code>
+      scopes the blocks under it; an arrow is a connection.
+    </p>
+
+    <div class="split">
+      <pre><span class="c"># the ledger, and what writes to it</span>
+
+<span class="k">db</span> <span class="id">orders</span> <span class="s">"Orders"</span> <span class="k">x1.5</span>
+  <span class="a">is</span>    <span class="v">the ledger — every authorisation and refund</span>
+  <span class="a">why</span> <span class="k">&gt;</span>
+    <span class="v">Postgres, single writer, two read replicas. The only
+    store permitted to be a source of truth.</span>
+  <span class="a">fact</span>  <span class="v">Engine  = Postgres 16</span>
+  <span class="a">fact</span>  <span class="v">Backups = PITR, 7 days</span>
+  <span class="a">list</span>  <span class="v">Tables  = orders, captures, refunds</span>
+  <span class="a">link</span>  <span class="v">Runbook = https://wiki/runbooks/orders</span>
+  <span class="a">env</span>   <span class="v">DATABASE_URL PGBOUNCER_HOST</span>
+
+<span class="id">checkout</span> <span class="k">-write-&gt;</span> <span class="id">orders</span> <span class="s">"the authorisation"</span>
+  <span class="a">carry</span> <span class="v">INSERT INTO orders (id, state, amount_cents)</span>
+  <span class="a">why</span>   <span class="v">Written before the processor is called, never
+        after. A crash between the two leaves a
+        recoverable row rather than a mystery.</span>
+  <span class="a">vol</span>   <span class="v">0.8</span></pre>
+
+      <div class="notes">
+        <div class="note">
+          <h3>Say what the thing is</h3>
+          <p>
+            There are eight shapes, but many words for each. Write <code>db</code>,
+            <code>topic</code>, <code>bucket</code>, <code>lb</code>, <code>worker</code>,
+            <code>cron</code> — whatever it actually is. They alias onto the same small
+            visual vocabulary, so the drawing stays learnable in about a minute.
+          </p>
+        </div>
+        <div class="note">
+          <h3>Every line has to be real</h3>
+          <p>
+            A connection must name something concrete in <code>carry</code> — a type, a
+            function, a table, a route. If you can't name what crosses it, the line isn't
+            real and the checker says so. This is the rule that stops generated diagrams
+            becoming boxes joined by vibes.
+          </p>
+        </div>
+        <div class="note">
+          <h3>Detail belongs in the file</h3>
+          <p>
+            <code>fact</code>, <code>list</code>, <code>link</code> and <code>env</code>
+            fill an inspector panel that opens when you click a block. Table names, env
+            vars, runbook links, source paths — the things you'd otherwise go hunting
+            through four repos for.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="sheet" id="how">
+  <section class="band">
+    <span class="eyebrow">How it reads</span>
+    <h2>A drawing you can interrogate.</h2>
+    <p class="sub">
+      A diagram is only worth keeping if it answers questions. Gridwillow puts three
+      layers of depth behind the same picture, so one blueprint serves the person
+      skimming and the person on call.
+    </p>
+
+    <div class="cols">
+      <div class="col">
+        <span class="n">01</span>
+        <h3>Shape carries meaning</h3>
+        <p>
+          A laminated slab is a store. A ribbed stack is a queue. A ghost box is
+          something you don't own. Because the vocabulary is closed, two blueprints of
+          two unrelated systems can be read side by side.
+        </p>
+        <div class="shapes">
+          <span>entry</span><span>svc</span><span>store</span><span>queue</span>
+          <span>model</span><span>lib</span><span>ext</span><span>job</span>
+        </div>
+      </div>
+      <div class="col">
+        <span class="n">02</span>
+        <h3>Hover for the mechanism</h3>
+        <p>
+          Hovering a block says what it does and what backs it. Hovering a hairline says
+          exactly what crosses it, when it fires, and what failure looks like — with its
+          packets speeding up so you can see which line you're reading.
+        </p>
+        <div class="shapes">
+          <span>-data-&gt;</span><span>-call-&gt;</span><span>-event-&gt;</span>
+          <span>-read-&gt;</span><span>-write-&gt;</span><span>-spawn-&gt;</span>
+        </div>
+      </div>
+      <div class="col">
+        <span class="n">03</span>
+        <h3>Click for everything else</h3>
+        <p>
+          Selecting a block opens an inspector: facts, table names, indexes, environment
+          variables, source paths, runbooks, and every connection in and out — each one
+          clickable, so you can walk the system without touching the drawing.
+        </p>
+        <div class="shapes">
+          <span>fact</span><span>list</span><span>link</span><span>env</span>
+          <span>src</span><span>uses</span><span>num</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="sheet" id="start">
+  <section class="band">
+    <span class="eyebrow">Getting started</span>
+    <h2>One binary, one file, no build step.</h2>
+
+    <div class="start">
+      <pre><span class="c"># install the compiler</span>
+cargo install --git https://github.com/ethereumdegen/gridwillow gridwillow-cli
+
+<span class="c"># check it — every problem at once, with line numbers</span>
+bp check infra.bp
+
+<span class="c"># one self-contained HTML file, ~1 MB, opens off disk</span>
+bp export infra.bp
+
+<span class="c"># or edit it live: the app redraws on every save</span>
+open -a Gridwillow infra.bp</pre>
+
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <div>
+            <h3>Describe the system</h3>
+            <p>By hand, or hand the prompt in the repo to a coding model along with your codebase and let it do the survey.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <div>
+            <h3>Check it</h3>
+            <p>Errors point at a line and a column. Warnings flag the things that make a blueprint worse to read — a vague payload, a block nothing connects to, forty-one blocks in one picture.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <div>
+            <h3>Export or open it</h3>
+            <p>The HTML has no external references at all — no server, no CDN, no network. Commit it next to the code it describes, or email it to someone.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="num">4</div>
+          <div>
+            <h3>Keep it honest</h3>
+            <p>Rendering is deterministic: same file, same drawing. Change one block, rebuild, and diff exactly what moved.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="sheet">
+  <footer>
+    <p>Gridwillow — MIT licensed. Built on three.js and Rust.</p>
+    <div class="flinks">
+      <a href="https://github.com/ethereumdegen/gridwillow">GitHub</a>
+      <a href="https://github.com/ethereumdegen/gridwillow/blob/main/PROTOCOL.md">Language reference</a>
+      <a href="https://github.com/ethereumdegen/gridwillow/blob/main/spec/blueprint.ebnf">Grammar</a>
+    </div>
+  </footer>
+</div>
+
+</body>
+</html>

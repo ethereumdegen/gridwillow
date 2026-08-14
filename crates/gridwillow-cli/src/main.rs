@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use blueprint_dsl::{build_lossy, parse};
+use gridwillow::{build_lossy, parse};
 
 const USAGE: &str = "\
 bp — blueprint files: check, build, format, export
@@ -83,7 +83,7 @@ fn main() -> ExitCode {
                 eprintln!("not formatted — a file has to parse before it can be tidied");
                 return ExitCode::FAILURE;
             }
-            let text = blueprint_dsl::emit::emit(&doc);
+            let text = gridwillow::emit::emit(&doc);
             if flag("--write") {
                 if text == source {
                     eprintln!("{shown} already tidy");
@@ -104,7 +104,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
             let dest = opt("-o").map(PathBuf::from).unwrap_or_else(|| path.with_extension("html"));
-            let html = blueprint_dsl::html::export(&out.ir);
+            let html = gridwillow::html::export(&out.ir);
             write_out(&dest, &html);
             let kb = html.len() / 1024;
             let n = out.ir["nodes"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -130,7 +130,7 @@ fn write_out(path: &Path, text: &str) {
     }
 }
 
-fn print_report(report: &blueprint_dsl::Report, path: &str, source: &str) {
+fn print_report(report: &gridwillow::Report, path: &str, source: &str) {
     let rendered = report.render(path, source);
     if !rendered.trim().is_empty() {
         eprint!("{rendered}");

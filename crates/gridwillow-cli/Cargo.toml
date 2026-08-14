@@ -1,6 +1,6 @@
 [package]
-name = "blueprint-cli"
-description = "bp — check, format and export blueprint files"
+name = "gridwillow-cli"
+description = "bp — the Gridwillow compiler: check, format and export blueprints"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,5 +10,5 @@ name = "bp"
 path = "src/main.rs"
 
 [dependencies]
-blueprint-dsl.workspace = true
+gridwillow.workspace = true
 serde_json.workspace = true

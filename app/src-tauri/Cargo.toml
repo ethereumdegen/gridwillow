@@ -1,12 +1,12 @@
 [package]
-name = "blueprint-app"
-description = "Blueprint — view and live-edit .bp infrastructure drawings"
+name = "gridwillow-app"
+description = "Gridwillow — view and live-edit .bp architecture blueprints"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "blueprint_app"
+name = "gridwillow_app"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -19,4 +19,4 @@ tauri-plugin-opener = "2"
 notify = "8"
 serde.workspace = true
 serde_json.workspace = true
-blueprint-dsl.workspace = true
+gridwillow.workspace = true

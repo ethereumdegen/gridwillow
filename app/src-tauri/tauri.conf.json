@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Blueprint",
+  "productName": "Gridwillow",
   "version": "0.1.0",
-  "identifier": "com.ethereumdegen.blueprint",
+  "identifier": "com.gridwillow.app",
   "build": {
     "frontendDist": "../dist"
   },
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Blueprint",
+        "title": "Gridwillow",
         "width": 1500,
         "height": 940,
         "minWidth": 900,
@@ -30,7 +30,7 @@
     "fileAssociations": [
       {
         "ext": ["bp"],
-        "name": "Blueprint",
+        "name": "Gridwillow Blueprint",
         "description": "Infrastructure blueprint",
         "role": "Editor"
       }

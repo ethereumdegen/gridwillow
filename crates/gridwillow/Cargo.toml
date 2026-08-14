@@ -1,6 +1,6 @@
 [package]
-name = "blueprint-dsl"
-description = "Parser and compiler for the .bp blueprint DSL"
+name = "gridwillow"
+description = "Parser and compiler for Gridwillow — a 3D diagram language for software architecture"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

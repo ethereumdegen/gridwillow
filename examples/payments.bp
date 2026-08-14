@@ -1,0 +1,415 @@
+blueprint payments-platform
+  title The Payment Path
+  tagline what happens between a card tap and a settled ledger row
+  branch main
+  stamp v4.2.0
+
+stat Services = 14 · 3 languages
+stat Peak = 4,200 req/s
+stat p99 = 340 ms end to end
+stat Ledger = 1.4 TB · single writer
+stat On call = 2 engineers
+stat Regions = us-east-1 · eu-west-1
+
+group edge "The edge"
+  note everything before the request is ours
+
+cdn edge_cache "CDN"
+  is caches the hosted checkout page and its assets, nothing else
+  why >
+    Payment requests are never cached. The rule is enforced at the edge by a
+    header allowlist rather than by convention, because someone will
+    eventually add a caching header to an API response by accident.
+  fact Provider = Cloudflare
+  fact TTL = 300 s on static only
+  link Config = https://wiki/infra/cdn
+
+lb ingress "Load balancer" x1.2
+  is terminates TLS and picks a healthy checkout instance
+  why >
+    Two of them, one per zone, sharing a floating address. Health checks are
+    shallow on purpose: a deep check that touched the ledger took the whole
+    pool down in March when a slow query made every instance look sick.
+  fact Zones = 2
+  fact Check = GET /healthz, 2 s timeout
+  src infra/nginx/
+  uses nginx
+  env TLS_CERT_PATH TLS_KEY_PATH
+
+client merchant_site "Merchant site"
+  is the shop the cardholder actually thinks they are on
+  why >
+    Loads a hosted field in an iframe so the card number never touches
+    merchant code. That single decision is what keeps every one of our
+    customers out of the widest part of PCI scope.
+
+group core "The core"
+  note the state machine, and the one place truth lives
+
+svc checkout "Checkout" x1.6
+  is turns a cart into an authorised payment
+  why >
+    Owns the state machine and nothing else. Every transition is written to
+    the ledger before the call that causes it, never after, so a crash
+    mid-flight leaves a recoverable record rather than a mystery.
+  fact Language = Rust
+  fact Instances = 6
+  fact States = created, authorising, authorised, captured, refunded, failed
+  list Endpoints = POST /v1/checkout, POST /v1/capture, POST /v1/refund
+  src services/checkout/
+  uses axum tokio sqlx
+  num Instances = 6
+  link Runbook = https://wiki/runbooks/checkout
+
+db orders "Orders" x1.5
+  is the ledger — every authorisation, capture and refund ever taken
+  why >
+    Postgres with a single writer and two read replicas. It is the only
+    store in the system permitted to be a source of truth; everything else
+    is a cache, an index, or a copy that may be thrown away.
+  fact Engine = Postgres 16
+  fact Region = us-east-1
+  fact Replicas = 2 read
+  fact Backups = PITR, 7 days
+  list Tables = orders, order_items, captures, refunds, idempotency_keys
+  list Indexes = orders_customer_idx, orders_created_at_idx, idem_key_uniq
+  link Runbook = https://wiki/runbooks/orders-db
+  env DATABASE_URL PGBOUNCER_HOST
+  num Size = 1.4 TB
+
+cache idem "Idempotency"
+  is remembers which request ids have already been answered
+  why >
+    Redis in front of a Postgres table, not instead of it. A cache miss
+    costs a query; a cache that were the only record would let a retried
+    charge through the moment it evicted.
+  fact Engine = Redis 7
+  fact TTL = 24 h
+  fact Eviction = noeviction
+  env REDIS_URL
+
+topic events "Payment events" x1.2
+  is the fan-out point — one authorised payment, five interested readers
+  why >
+    Kafka, keyed by order id so a single order's events never reorder.
+    Consumers are all at-least-once, which is why every one of them is
+    written to be idempotent rather than merely careful.
+  fact Broker = Kafka 3.7
+  fact Partitions = 24
+  fact Key = order_id
+  list Topics = payments.authorised, payments.captured, payments.refunded
+  env KAFKA_BROKERS KAFKA_SASL_USER
+
+group downstream "Downstream"
+
+worker settlement "Settlement" x1.2
+  is batches captured payments into daily files for the acquirer
+  why >
+    Runs against the read replica, never the writer. The file format is
+    fixed-width and forty years old, which is the reason this is a separate
+    service rather than a function inside checkout.
+  fact Schedule = 02:00 UTC daily
+  fact Format = fixed-width, 512 bytes
+  src services/settlement/
+  uses python pandas
+
+svc ledger_api "Ledger API"
+  is read-only queries over the ledger for the dashboard and support
+  why >
+    Deliberately has no write path at all. Support tooling that can only
+    read is support tooling that cannot cause an incident at 3am.
+  list Endpoints = GET /v1/orders, GET /v1/orders/{id}, GET /v1/refunds
+  src services/ledger-api/
+  uses axum
+
+svc notifier "Notifier"
+  is sends receipts and failure notices
+  why >
+    Consumes the event topic and calls the mail provider. A failure here is
+    logged and dropped rather than retried forever, because a receipt that
+    arrives three days late is worse than one that never arrives.
+  uses sendgrid
+
+bucket archive "Archive"
+  is settled files and their acknowledgements, kept for seven years
+  why >
+    Object lock is on and the retention period is not something the
+    application credentials can change. That is a compliance requirement
+    and also the only backstop if the ledger is ever wrong.
+  fact Storage = S3, object lock
+  fact Retention = 7 years
+  env S3_BUCKET AWS_REGION
+
+group outside "Not ours"
+
+ext processor "Card processor" x1.3
+  is the network that actually moves the money
+  why >
+    The slowest thing in the path by an order of magnitude, and the only
+    dependency with no fallback. Every timeout budget in the system is
+    derived from theirs rather than chosen.
+  fact p99 = 280 ms
+  fact Timeout = 8 s
+  fact Fallback = none
+  link Status = https://status.processor.example
+
+ext acquirer "Acquirer"
+  is the bank that receives the daily settlement file
+  why >
+    Accepts files over SFTP on a schedule measured in hours. That is the
+    reason settlement is a batch job in a system that is otherwise entirely
+    event-driven, and the reason it is the only thing here without a retry.
+
+group ops "Operations"
+
+cron reconciler "Reconciler"
+  is finds orders whose state and the processor disagree
+  why >
+    Runs every fifteen minutes over anything stuck in authorising for more
+    than two. It exists because the write-before-call ordering guarantees a
+    recoverable record, and something has to actually recover it.
+  fact Schedule = */15 * * * *
+  fact Window = 2 h lookback
+  src services/reconciler/
+  link Runbook = https://wiki/runbooks/reconciler
+
+svc metrics "Metrics"
+  is scrapes every service and drives the alerts
+  why >
+    One alert pages: a sustained 5xx rate at the load balancer. Everything
+    else is a dashboard, because an alert nobody acts on trains people to
+    ignore the ones that matter.
+  fact Stack = Prometheus + Grafana
+  list Paging alerts = ingress_5xx_rate
+  link Dashboard = https://grafana/d/payments
+
+lib contracts "Contracts"
+  is the shared event and API schemas every service builds against
+  why >
+    Versioned and additive-only. A consumer written last year still parses
+    an event produced today, which is what lets services deploy on their
+    own schedule instead of together.
+  fact Format = protobuf
+  src contracts/
+  list Schemas = payment_authorised, payment_captured, payment_refunded
+
+# ----------------------------------------------------------------------
+# connections
+# ----------------------------------------------------------------------
+
+merchant_site -call-> edge_cache "the page"
+  carry GET /checkout/{session_id}
+  why >
+    The hosted field, loaded in an iframe. Cached hard, because it changes
+    with a deploy and never with a request.
+  vol 0.5
+
+edge_cache -call-> ingress "a tap"
+  carry POST /v1/checkout {cart_id, payment_method, idempotency_key}
+  why >
+    The only inbound write path in the system. A sustained 5xx here is the
+    one alert that pages someone.
+  vol 0.9
+
+ingress -call-> checkout "routed"
+  carry POST /v1/checkout to a healthy instance
+  why >
+    Least-connections across six instances. A draining instance finishes
+    its in-flight state transitions before it leaves the pool.
+  vol 0.9
+
+checkout -read-> idem "seen this?"
+  carry GET idem:{idempotency_key}
+  why >
+    First thing on every write path. A hit returns the original response
+    verbatim rather than doing the work again.
+  vol 0.85
+
+checkout -write-> orders "the authorisation"
+  carry INSERT INTO orders (id, cart_id, state, amount_cents)
+  why >
+    Written before the processor is called, never after. If the process
+    dies between the two, the reconciler finds the orphan by its state.
+  vol 0.8
+
+checkout -call-> processor "the charge"
+  carry POST /authorizations {amount, token, merchant_id}
+  why >
+    The slow one, on an eight-second budget. A timeout is not a failure:
+    the order stays in authorising and the reconciler resolves it.
+  vol 0.75
+
+checkout -event-> events "authorised"
+  carry payments.authorised {order_id, amount_cents, captured_at}
+  why >
+    Emitted after the ledger write commits, so no consumer can ever see an
+    event for an order that is not yet durable.
+  vol 0.7
+
+contracts -read-> checkout "schemas"
+  carry payment_authorised.proto
+  why >
+    Compiled at build time, not fetched at runtime. A schema change that
+    breaks a consumer fails their build rather than their pager.
+  vol 0.2
+
+events -data-> notifier "receipts"
+  carry payments.authorised, payments.captured
+  why >
+    At-least-once, so the notifier dedupes on order id. A duplicate receipt
+    is embarrassing; a duplicate charge would be worse.
+  vol 0.5
+
+events -data-> settlement "the day's captures"
+  carry payments.captured
+  why >
+    Buffered until the nightly run rather than acted on immediately, which
+    is the whole reason this goes through a topic instead of a call.
+  vol 0.4
+
+settlement -read-> orders "the batch"
+  carry SELECT … FROM orders WHERE state = 'captured' AND day = $1
+  why >
+    Against a read replica. It is the heaviest query in the system and it
+    is deliberately nowhere near the writer.
+  vol 0.3
+
+settlement -write-> archive "the file"
+  carry PUT settlements/{date}.txt
+  why >
+    Written before it is sent, so a failed transfer can be retried without
+    regenerating anything. Object lock means it cannot be rewritten after.
+  vol 0.25
+
+settlement -call-> acquirer "the transfer"
+  carry SFTP PUT settlements/{date}.txt
+  why >
+    Once a day, over a protocol older than most of the team. A failure here
+    is a phone call the next morning, not a page tonight.
+  vol 0.2
+
+ledger_api -read-> orders "support queries"
+  carry SELECT * FROM orders WHERE id = $1
+  why >
+    Read replica, no write path anywhere in the service. Support tooling
+    that cannot write is support tooling that cannot cause an incident.
+  vol 0.4
+
+reconciler -read-> orders "the stuck ones"
+  carry SELECT … WHERE state = 'authorising' AND updated_at < now() - '2h'
+  why >
+    Every fifteen minutes. Finds orders whose write landed but whose
+    processor call never came back.
+  vol 0.3
+
+reconciler -call-> processor "what really happened?"
+  carry GET /authorizations/{id}
+  why >
+    Asks the processor for the truth and moves the order to match. This is
+    the only place in the system where their record wins over ours.
+  vol 0.2
+
+reconciler -write-> orders "the correction"
+  as reconciler_correction
+  carry UPDATE orders SET state = $1 WHERE id = $2
+  why >
+    The one write outside checkout, and it only ever moves an order out of
+    authorising. Anything else it finds is escalated rather than fixed.
+  vol 0.2
+
+checkout -event-> metrics "instrumentation"
+  carry /metrics — request counts, state transitions, processor latency
+  why >
+    Scraped every fifteen seconds. Processor latency is the number that
+    predicts an incident earliest.
+  vol 0.6
+
+ingress -event-> metrics "5xx rate"
+  carry nginx status, per-upstream
+  why >
+    The only signal wired to a pager. Everything else is a dashboard,
+    because an alert nobody acts on trains people to ignore all of them.
+  vol 0.5
+
+# ----------------------------------------------------------------------
+# narrative
+# ----------------------------------------------------------------------
+
+tab what "What it does"
+
+  h The Payment Path
+
+  p >
+    A card tap arrives at [[the load balancer|ingress]] and leaves as a row in
+    [[the ledger|orders]]. Everything in between is one state machine, owned by
+    one service, writing to one store that is allowed to be true.
+
+  p >
+    The shape of this drawing is the shape of the argument: a narrow write path
+    down the middle, a {{fan-out}} to everything that merely wants to know, and
+    a batch job off to the side that talks to a bank over a protocol older than
+    most of the team.
+
+  note >
+    Hover a block for what it is. Click one for everything about it — table
+    names, environment variables, runbooks, and every connection in and out.
+
+  h The one ordering rule
+
+  p >
+    [[Checkout|checkout]] writes to the ledger before it calls
+    [[the processor|processor]], never after. That ordering is the single
+    invariant the whole system rests on: a crash between the two leaves a row
+    in authorising, and [[the reconciler|reconciler]] resolves it against the
+    processor's own record fifteen minutes later.
+
+  p >
+    Reverse it and a crash leaves money moved with nothing to show for it.
+    There is no clever recovery from that, which is why the rule is stated in
+    the code, in the runbook, and here.
+
+tab how "How it's built"
+
+  h Three tiers, three failure modes
+
+  p >
+    The synchronous path — [[edge|ingress]], [[checkout|checkout]],
+    [[ledger|orders]] — fails loudly and pages someone. The event path
+    ([[the topic|events]] and its readers) fails quietly and catches up.
+    [[Settlement|settlement]] fails on a daily cadence and is somebody's
+    morning.
+
+  p >
+    Keeping those three apart is most of the design. Nothing on the paging path
+    is allowed to depend on anything that is merely eventually consistent.
+
+  h Idempotency, twice
+
+  p >
+    Every write carries a key, checked against [[Redis|idem]] first and a
+    Postgres table behind it. The cache is an optimisation and is treated like
+    one: a miss costs a query, and a cache that were the only record would let
+    a retried charge through the moment it evicted.
+
+  code |
+    curl -XPOST https://api.example/v1/checkout \
+      -H 'Idempotency-Key: 8f14e45f' \
+      -d @cart.json
+
+  h What is deliberately missing
+
+  p >
+    No service mesh, no read-your-writes across regions, no fallback processor.
+    Each is a real gap, each was cheaper to live with than to run, and each is
+    written down here so the next person does not have to guess whether it was
+    an oversight.
+
+  ---
+
+  p >
+    Everything on this screen was generated from one 300-line text file. Change
+    a line, save, and the drawing redraws.
+
+term "fan-out" >
+  One producer writing to a topic that several independent consumers read,
+  each at its own pace and without knowing about the others.

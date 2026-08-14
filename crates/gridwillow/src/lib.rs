@@ -1,4 +1,4 @@
-//! `.bp` — a text format for describing software infrastructure, and its
+//! Gridwillow — a text language for describing software architecture, and its
 //! compiler to the JSON intermediate representation the renderer draws.
 //!
 //! Think of it as Mermaid for three-dimensional infrastructure blueprints:
@@ -8,7 +8,7 @@
 //!
 //! ```no_run
 //! let src = std::fs::read_to_string("infra.bp").unwrap();
-//! match blueprint_dsl::build(&src) {
+//! match gridwillow::build(&src) {
 //!     Ok(out) => println!("{}", out.ir),
 //!     Err(report) => eprint!("{}", report.render("infra.bp", &src)),
 //! }

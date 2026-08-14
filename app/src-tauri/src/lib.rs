@@ -73,7 +73,7 @@ fn load_and_emit(app: &AppHandle, path: &Path, first_load: bool) {
     };
 
     let shown = path.display().to_string();
-    let out = blueprint_dsl::build_lossy(&source);
+    let out = gridwillow::build_lossy(&source);
 
     if out.report.has_errors() {
         let _ = app.emit(
@@ -197,7 +197,7 @@ fn current_blueprint(state: State<App>) -> Option<Loaded> {
 fn export_html(state: State<App>, dest: String) -> Result<String, String> {
     let open = state.open.lock().unwrap();
     let ir = open.ir.as_ref().ok_or("nothing is open")?;
-    let html = blueprint_dsl::html::export(ir);
+    let html = gridwillow::html::export(ir);
     std::fs::write(&dest, &html).map_err(|e| format!("cannot write {dest}: {e}"))?;
     Ok(format!("{dest} — {} KB, self-contained", html.len() / 1024))
 }
@@ -210,13 +210,12 @@ fn pick_and_open(app: &AppHandle) {
         .file()
         .add_filter("Blueprint", &["bp"])
         .pick_file(move |chosen| {
-            if let Some(f) = chosen {
-                if let Ok(p) = f.into_path() {
+            if let Some(f) = chosen
+                && let Ok(p) = f.into_path() {
                     let h = handle.clone();
                     let state = h.state::<App>();
                     let _ = open_blueprint(h.clone(), state, p.display().to_string());
                 }
-            }
         });
 }
 
@@ -235,8 +234,8 @@ fn pick_and_export(app: &AppHandle) {
         .set_file_name(&suggested)
         .add_filter("HTML", &["html"])
         .save_file(move |chosen| {
-            if let Some(f) = chosen {
-                if let Ok(p) = f.into_path() {
+            if let Some(f) = chosen
+                && let Ok(p) = f.into_path() {
                     let state = handle.state::<App>();
                     match export_html(state, p.display().to_string()) {
                         Ok(msg) => {
@@ -251,7 +250,6 @@ fn pick_and_export(app: &AppHandle) {
                         }
                     }
                 }
-            }
         });
 }
 
