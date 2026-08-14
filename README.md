@@ -31,11 +31,16 @@ No install, no `node_modules`, no dev server, no network. Node 18+ is the only
 requirement, and only for the build step — the output itself is a single HTML file that
 opens straight off disk.
 
-Try it on the repo that describes itself:
+Try it on the repo that describes itself, or on a real one:
 
 ```bash
-node scripts/build.mjs examples/self.codeviz.json && open examples/self.blueprint.html
+node scripts/build.mjs examples/self.codeviz.json              && open examples/self.blueprint.html
+node scripts/build.mjs examples/metalcraft-agent.codeviz.json  && open examples/metalcraft-agent.blueprint.html
 ```
+
+`examples/metalcraft-agent.codeviz.json` was produced by running `PROMPT.md` against
+[metalcraft-agent](https://github.com/rust4ai/metalcraft-agent) — 39 subsystems, 63
+connections, every claimed source path verified to exist.
 
 ## What you get
 
