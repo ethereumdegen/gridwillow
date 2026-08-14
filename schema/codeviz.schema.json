@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ethereumdegen/codebase-blueprint-ai/schema/codeviz.schema.json",
+  "title": "CodeViz Blueprint",
+  "description": "A rigid description of a codebase's architecture, rendered by template/index.html as an animated isometric engineering drawing. This file is the ONLY artifact an LLM authors; the renderer is fixed.",
+  "type": "object",
+  "required": ["codeviz", "meta", "groups", "nodes", "edges", "narrative"],
+  "additionalProperties": false,
+
+  "properties": {
+    "codeviz": {
+      "description": "Protocol version. Must be \"1.0\".",
+      "const": "1.0"
+    },
+
+    "meta": {
+      "type": "object",
+      "required": ["repo", "title", "tagline"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Repository name as it appears on disk, e.g. \"metalcraft-agent\"."
+        },
+        "branch": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Branch or variant label shown next to the repo name, e.g. \"rust-rewrite\"."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "The human name for what this system IS, not what the repo is called. e.g. \"The Evolution Harness\"."
+        },
+        "tagline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "One lowercase sentence under the title describing what the system does. No marketing."
+        },
+        "generated": {
+          "type": "string",
+          "description": "Free-form date/commit string shown in the footer."
+        }
+      }
+    },
+
+    "stats": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 6,
+      "description": "The strip across the top. Facts a reader could not guess. Prefer counts that reveal shape over trivia like file counts.",
+      "items": {
+        "type": "object",
+        "required": ["label", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "minLength": 1, "maxLength": 24 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 34 }
+        }
+      }
+    },
+
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "description": "Sidebar section headers. Every node belongs to exactly one. Order them so the reader walks the system in the order it actually runs.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/slug" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "order": { "type": "integer", "minimum": 0, "maximum": 99 },
+          "note": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "Optional one-liner shown under the header in the sidebar."
+          }
+        }
+      }
+    },
+
+    "nodes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 60,
+      "description": "Subsystems, not files. Aim for 15-40.",
+      "items": { "$ref": "#/$defs/node" }
+    },
+
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 160,
+      "description": "Real, concrete connections. Every edge must name what actually crosses it.",
+      "items": { "$ref": "#/$defs/edge" }
+    },
+
+    "narrative": {
+      "type": "object",
+      "required": ["tabs"],
+      "additionalProperties": false,
+      "properties": {
+        "tabs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/tab" }
+        },
+        "glossary": {
+          "type": "array",
+          "maxItems": 40,
+          "description": "Terms a reader may not know. Rendered as a dotted-underline term in the panel; hovering shows the definition.",
+          "items": {
+            "type": "object",
+            "required": ["term", "definition"],
+            "additionalProperties": false,
+            "properties": {
+              "term": { "type": "string", "minLength": 1, "maxLength": 60 },
+              "definition": { "type": "string", "minLength": 1, "maxLength": 400 }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,47}$",
+      "description": "lower_snake_case identifier, 2-48 chars, starts with a letter."
+    },
+
+    "gridPos": {
+      "type": "array",
+      "description": "[column, row] on the isometric grid. Integers, may be negative. Omit to let the auto-layout place the node.",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "integer", "minimum": -40, "maximum": 40 }
+    },
+
+    "node": {
+      "type": "object",
+      "required": ["id", "label", "group", "kind", "summary", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 34,
+          "description": "Displayed uppercase by the renderer. Write it in normal case; 1-3 words."
+        },
+        "group": {
+          "$ref": "#/$defs/slug",
+          "description": "Must match a groups[].id."
+        },
+        "kind": {
+          "enum": ["entrypoint", "service", "store", "queue", "model", "library", "external", "job"],
+          "description": "Drives geometry and hatching. See PROTOCOL.md for the shape table. Never invent a kind."
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2,
+          "default": 1,
+          "description": "Relative visual mass. Use it to say 'this is the big one'. Purely cosmetic."
+        },
+        "pos": { "$ref": "#/$defs/gridPos" },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 90,
+          "description": "One clause, shown in the sidebar and as the hover card's first line."
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 600,
+          "description": "2-4 plain sentences in the hover card: what it does, how, and one thing a reader would not have guessed."
+        },
+        "paths": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Repo-relative paths that actually exist. Directories are fine and often better.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 120 }
+        },
+        "tech": {
+          "type": "array",
+          "maxItems": 6,
+          "description": "Concrete crates/packages/services, lowercase. e.g. [\"tokio\", \"sqlite\"].",
+          "items": { "type": "string", "minLength": 1, "maxLength": 24 }
+        },
+        "metrics": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["label", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "maxLength": 20 },
+              "value": { "type": "string", "minLength": 1, "maxLength": 20 }
+            }
+          }
+        },
+        "status": {
+          "enum": ["active", "dormant", "planned"],
+          "default": "active",
+          "description": "dormant renders faded with a dashed outline; planned renders as a ghost with no fill."
+        }
+      }
+    },
+
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "kind", "label", "payload", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "from": { "$ref": "#/$defs/slug" },
+        "to": { "$ref": "#/$defs/slug" },
+        "kind": {
+          "enum": ["data", "call", "event", "read", "write", "spawn"],
+          "description": "Drives line style and packet shape. See PROTOCOL.md."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "What travels, in 1-4 lowercase words. e.g. \"chosen parent\"."
+        },
+        "payload": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "The CONCRETE thing: a type signature, a function name, an SQL table, an HTTP route, a channel type. If you cannot name one, the edge is not real - delete it."
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 400,
+          "description": "2-3 sentences in the connector hover card: when it fires, what it carries, what happens if it fails."
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.5,
+          "description": "How busy this path is relative to the others. Drives packet count and speed."
+        },
+        "bidirectional": { "type": "boolean", "default": false },
+        "waypoints": {
+          "type": "array",
+          "maxItems": 6,
+          "description": "Optional manual routing points. Omit unless a line is genuinely tangled.",
+          "items": { "$ref": "#/$defs/gridPos" }
+        }
+      }
+    },
+
+    "tab": {
+      "type": "object",
+      "required": ["id", "label", "blocks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 60,
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+
+    "block": {
+      "type": "object",
+      "required": ["type", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["h", "p", "note", "code", "rule"],
+          "description": "h = section heading, p = paragraph, note = indented aside, code = monospace block, rule = horizontal divider (text ignored)."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Plain text. Two inline markups are allowed and nothing else: [[shown text|node_id]] links a phrase to a node (hovering either one highlights the other), and {{term}} marks a glossary term."
+        }
+      }
+    }
+  }
+}
