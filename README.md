@@ -1,6 +1,6 @@
 # Gridwillow
 
-**A 3D diagram language for software architecture.**
+**A 3D diagram language/DSL for software architecture.**
 
 [![licence](https://img.shields.io/badge/licence-MIT-black)](LICENSE)
 [![language](https://img.shields.io/badge/compiler-Rust-black)](crates/gridwillow)
@@ -10,7 +10,7 @@ Write a plain text file describing your services, databases, queues and the data
 that moves between them. Get back an isometric engineering drawing you can pan,
 hover and click through — with a full inspector behind every block.
 
-![A Gridwillow blueprint of a payments platform, with the ledger selected and its inspector open](docs/preview.png)
+<img width="1061" height="617" alt="A Gridwillow blueprint" src="https://github.com/user-attachments/assets/51101c00-1497-4c7a-869a-1007cb5af4c7" />
 
 ```
 db orders "Orders" x1.5
