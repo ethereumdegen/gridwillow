@@ -4,6 +4,7 @@ description = "Parser and compiler for Gridwillow — a 3D diagram language for 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

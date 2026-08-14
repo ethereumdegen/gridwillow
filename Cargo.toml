@@ -7,7 +7,7 @@ default-members = ["crates/gridwillow", "crates/gridwillow-cli", "app/src-tauri"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/ethereumdegen/codebase-blueprint-ai"
+repository = "https://github.com/ethereumdegen/gridwillow"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
