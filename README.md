@@ -54,6 +54,27 @@ bp export examples/metalcraft-agent.bp   # a real Rust service, 39 blocks
 bp export examples/self.bp               # this repo, describing itself
 ```
 
+## Let an agent write it
+
+```sh
+./skills/install.sh          # OMP    -> ~/.omp/agent/skills/
+./skills/install.sh claude   # Claude -> ~/.claude/skills/
+```
+
+Two skills, plain `SKILL.md` files in the format [OMP](https://omp.sh) and Claude
+Code both discover:
+
+- **`gridwillow-blueprint`** surveys a repo — manifest, entrypoints, migrations,
+  deployment config — traces the call graph with `lsp`, and writes a `.bp`. It
+  bundles its own grammar and prose references, so it works installed globally
+  with no copy of this repo nearby.
+- **`gridwillow-refresh`** takes a blueprint that already exists and checks every
+  claim in it against the code: paths that moved, functions that were deleted,
+  tables that were added. A diagram that is quietly wrong is worse than none.
+
+The compiler is the grader — the skill is told to run `bp check` and fix what it
+reports, so what comes back compiles.
+
 ## What you get
 
 - **An isometric field of extruded blocks.** Eight shapes, closed set — but many
@@ -91,7 +112,8 @@ fit, `L` for labels, `Esc` to deselect.
 
 | path | what it is |
 |---|---|
-| `PROMPT.md` | hand this to a model with a repo; it writes the `.bp` |
+| `skills/` | OMP / Claude Code skills — an agent that writes and refreshes blueprints |
+| `PROMPT.md` | the same procedure as one long paste, if you prefer that |
 | `PROTOCOL.md` | the language reference — read this one |
 | `spec/blueprint.ebnf` | the formal grammar |
 | `spec/blueprint-ir.schema.json` | the compiled IR the renderer consumes |
