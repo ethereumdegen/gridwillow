@@ -162,9 +162,13 @@ step.
 cd site && npm start        # http://localhost:3000
 ```
 
-Deploying to Railway needs no configuration beyond the repo — `railway.json` sets
-the start command and nixpacks does the rest. To refresh the hero after editing
-the sample:
+Deploy it by pointing a Railway service at this repo with **Root Directory** set
+to `site`. Nixpacks finds `site/package.json`, runs `node server.js`, and never
+touches the Rust half; redeploys only trigger on changes under that path.
+
+`site/payments.blueprint.html` is the one build artifact in version control —
+Railway builds `site/` alone and has no Rust toolchain to regenerate it. After
+editing the sample, rebuild it and commit:
 
 ```bash
 bp export examples/payments.bp -o site/payments.blueprint.html

@@ -2,7 +2,9 @@ target/
 node_modules/
 .DS_Store
 
-# built artifacts — the .bp file is the source
+# built artifacts — the .bp file is the source, `bp export` regenerates these.
+# The one exception is the site's hero, which has to be committed because
+# Railway builds site/ alone and has no Rust toolchain to rebuild it.
 app/dist/
 *.blueprint.html
-!examples/*.blueprint.html
+!site/payments.blueprint.html
