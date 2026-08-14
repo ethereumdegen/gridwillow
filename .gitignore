@@ -8,3 +8,6 @@ node_modules/
 app/dist/
 *.blueprint.html
 !site/payments.blueprint.html
+
+# dev harness
+package-lock.json

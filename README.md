@@ -187,6 +187,39 @@ where a relative module import would be blocked by CORS. It costs about 660 KB
 per file and buys a deliverable that still renders identically, offline, in five
 years.
 
+## The visual harness
+
+The renderer is the one part a unit test can't reach, so there's a harness that
+drives it headlessly and *measures* the result instead of eyeballing it:
+
+```bash
+npm i                                            # playwright, dev-only
+node scripts/shoot.mjs examples/payments.bp --check
+```
+
+It renders across zoom levels and device pixel ratios, writes a PNG per
+combination, and asserts three things per frame:
+
+- the canvas fits its container (catches pixel-ratio scaling bugs)
+- every label sits where it should, within 1.5px
+- labels were actually measured, and at least one is visible
+
+The alignment check re-projects each block's apex itself from the canvas's real
+on-screen rectangle and compares that against where the label div ended up. It
+shares no code with the renderer's label maths, so a bug in one can't hide in
+the other.
+
+That check exists because it had to: the renderer was calling
+`setSize(w, h, false)`, which skips setting the canvas's CSS size. On a retina
+display the canvas laid out at twice its container — the drawing rendered double
+and clipped, and every label landed at half position. Screenshots at
+devicePixelRatio 1 look perfect and can never catch it.
+
+```bash
+node scripts/shoot.mjs examples/payments.bp --zoom 0.5,1,2,4 --dpr 1,2
+node scripts/shoot.mjs examples/payments.bp --focus orders --inspect
+```
+
 ## Building the app
 
 Needs the Rust toolchain and the Tauri CLI (`cargo install tauri-cli --version '^2'`).

@@ -190,7 +190,9 @@ html, body {
   cursor: grab;
 }
 #stage.dragging { cursor: grabbing; }
-#stage canvas { display: block; }
+/* belt and braces: three sizes the canvas, but if that ever regresses the
+   canvas is still pinned to its container instead of overflowing it. */
+#stage canvas { display: block; width: 100%; height: 100%; }
 
 #labels {
   position: absolute;
@@ -1799,7 +1801,13 @@ export function createBlueprint(DATA, opts = {}) {
 
   function resize() {
     const w = stage.clientWidth, h = stage.clientHeight;
-    renderer.setSize(w, h, false);
+    // updateStyle must stay ON. Without it three sets only the canvas's width
+    // and height *attributes* — which are multiplied by the pixel ratio — and
+    // the element then lays out at that intrinsic size. On a retina display
+    // that is a canvas twice the size of its container: the drawing renders
+    // double and clipped, and every screen-space calculation that uses the
+    // container's dimensions (labels, picking, fit) is off by the ratio.
+    renderer.setSize(w, h);
     applyCamera();
   }
   const _ro = new ResizeObserver(resize); _ro.observe(stage);
@@ -1982,7 +1990,10 @@ export function createBlueprint(DATA, opts = {}) {
     }
 
     scene.add(grp);
-    const topY = grp.position.y + hy + 0.12;
+    // The exact top of the block. Any padding added here would be in WORLD
+    // units, so the gap between a label and its block would grow and shrink
+    // with zoom. The gap is applied in pixels at draw time instead.
+    const topY = grp.position.y + hy + (spec.knob ? 0.17 : 0);
     const view = { node, group: grp, outlineMats, topY, fx, fz, hy };
     nodeViews.set(node.id, view);
     for (const p of picks) { p.userData.nodeId = node.id; pickNodes.push(p); }
@@ -2272,6 +2283,7 @@ export function createBlueprint(DATA, opts = {}) {
   for (const n of DATA.nodes) {
     const d = document.createElement('div');
     d.className = 'nlabel';
+    d.dataset.node = n.id;   // lets a test harness match a label to its block
     d.textContent = n.label;
     labelsEl.appendChild(d);
     labelEls.set(n.id, d);
@@ -2558,18 +2570,33 @@ export function createBlueprint(DATA, opts = {}) {
     .map(n => n.id)
     .sort((a, b) => degree.get(b) - degree.get(a) || a.localeCompare(b));
 
-  const labelSize = new Map();   // measured once, text never changes
-  let labelMeasured = false;
+  const labelSize = new Map();   // measured once laid out; the text never changes
   const placedRects = [];
 
+  /** Pixels between a block's top corner and the bottom of its label. */
+  const LABEL_GAP = 7;
+
+  /* Measure only what the browser has actually laid out. Falling back to a
+     guess and latching it would freeze every label at the same made-up width,
+     which quietly breaks the collision test for the rest of the session. */
+  function measureLabels() {
+    if (labelSize.size === labelEls.size) return;
+    for (const [id, el] of labelEls) {
+      if (labelSize.has(id)) continue;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (w > 0 && h > 0) labelSize.set(id, [w, h]);
+    }
+  }
+
   function updateLabels() {
-    const W = stage.clientWidth, H = stage.clientHeight;
+    // The canvas is the frame of reference, not its container: they agree only
+    // while the renderer keeps the canvas sized to fit, and a bug there should
+    // show up as a misplaced label rather than as silently wrong coordinates.
+    const W = renderer.domElement.clientWidth || stage.clientWidth;
+    const H = renderer.domElement.clientHeight || stage.clientHeight;
     const showAll = labelsOn && cam.zoom > 0.5;
 
-    if (!labelMeasured) {
-      for (const [id, el] of labelEls) labelSize.set(id, [el.offsetWidth || 40, el.offsetHeight || 10]);
-      labelMeasured = [...labelSize.values()].some(s => s[0] > 0);
-    }
+    measureLabels();
 
     placedRects.length = 0;
     const priority = new Set();
@@ -2594,8 +2621,11 @@ export function createBlueprint(DATA, opts = {}) {
       const y = (-proj.y * 0.5 + 0.5) * H;
       if (x < -60 || y < -20 || x > W + 60 || y > H + 20) { el.classList.add('hidden'); continue; }
 
+      // Anchored by its bottom edge, a fixed number of pixels above the block,
+      // so the gap reads the same at every zoom level.
       const [lw, lh] = labelSize.get(id) || [40, 10];
-      const rect = [x - lw / 2 - 2, y - lh / 2 - 1, x + lw / 2 + 2, y + lh / 2 + 1];
+      const top = y - LABEL_GAP - lh;
+      const rect = [x - lw / 2 - 2, top - 1, x + lw / 2 + 2, top + lh + 1];
       if (!forced) {
         let clash = false;
         for (const r of placedRects) {
@@ -2605,7 +2635,7 @@ export function createBlueprint(DATA, opts = {}) {
       }
       placedRects.push(rect);
       el.classList.remove('hidden');
-      el.style.transform = `translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+      el.style.transform = `translate(-50%,-100%) translate(${x.toFixed(1)}px,${(y - LABEL_GAP).toFixed(1)}px)`;
     }
   }
 
@@ -2790,6 +2820,9 @@ export function createBlueprint(DATA, opts = {}) {
   return {
     dispose,
     data: DATA,
+    camera,
+    renderer,
+    cam,          // the camera's goal state, so a harness can drive zoom/yaw
     problems,
     nodeViews,
     edgeViews,

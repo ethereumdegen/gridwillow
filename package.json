@@ -1,0 +1,13 @@
+{
+  "name": "gridwillow-dev",
+  "private": true,
+  "description": "Dev-only harness deps. The project itself has no runtime dependencies.",
+  "type": "module",
+  "scripts": {
+    "shoot": "node scripts/shoot.mjs",
+    "check:visual": "node scripts/shoot.mjs examples/payments.bp --check && node scripts/shoot.mjs examples/metalcraft-agent.bp --check"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
