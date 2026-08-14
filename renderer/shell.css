@@ -181,6 +181,13 @@ html, body {
   overflow: hidden;
   background: var(--paper);
   cursor: grab;
+  /* Claim every touch gesture. The default lets the browser interpret a drag
+     as a page scroll and a pinch as a page zoom, and it cancels the pointer
+     stream the moment it decides that — which is why panning did nothing on a
+     phone. Nothing here scrolls, so there is nothing to give up. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 #stage.dragging { cursor: grabbing; }
 /* belt and braces: three sizes the canvas, but if that ever regresses the
@@ -444,7 +451,15 @@ html, body {
 #nodata .err { color: var(--live); font-size: 9px; }
 
 @media (max-width: 1180px) { :root { --narr-w: 250px; --side-w: 190px; } }
-@media (max-width: 940px)  { #narr { display: none; } }
+
+/* ---------- narrow screens ------------------------------------------------
+   Below this the drawing gets the whole width and the two panels become
+   drawers. Hiding the narrative outright (what this used to do) left a 190px
+   sidebar eating half of a phone screen and no way to read the prose at all.
+   -------------------------------------------------------------------------- */
+
+/* the drawer buttons only exist on narrow screens */
+.drawer-btn { display: none; }
 
 /* ==========================================================================
    inspector — the panel that replaces the narrative when a block is selected
@@ -627,3 +642,107 @@ html, body {
   transition: transform .16s ease-out;
 }
 #errstrip.on { transform: translateY(0); }
+
+
+/* ==========================================================================
+   NARROW SCREENS — deliberately last in the file
+   --------------------------------------------------------------------------
+   These rules have to come after everything else, because they override
+   properties that later sections set for the desktop layout (the inspector
+   block re-declares `#narr { position: relative }`, for one). Ordering is the
+   only thing separating them; the selectors have identical specificity.
+
+   Below this width the drawing takes the whole viewport and the two panels
+   become drawers. Both panels must also leave the grid entirely — a grid item
+   whose named area no longer exists gets auto-placed into a NEW implicit
+   column, which is how a phone ended up with a 55px-wide drawing even though
+   grid-template-columns said 1fr.
+   ========================================================================== */
+
+#scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(47, 44, 25, .28);
+  z-index: 55;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s;
+}
+
+.drawer-btn { display: none; }
+
+@media (max-width: 820px) {
+  :root { --topbar-h: 34px; --botbar-h: 26px; }
+
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--topbar-h) 1fr var(--botbar-h);
+    grid-template-areas: "top" "stage" "bot";
+  }
+
+  #sidebar, #narr {
+    grid-area: auto;          /* out of the template, so no implicit tracks */
+    position: fixed;
+    top: var(--topbar-h);
+    bottom: var(--botbar-h);
+    width: min(78vw, 320px);
+    z-index: 60;
+    transition: transform .18s ease-out;
+    box-shadow: 0 0 30px rgba(47, 44, 25, .22);
+  }
+  #sidebar { left: 0; transform: translateX(-101%); border-right: 1px solid var(--rule); }
+  #narr    { right: 0; transform: translateX(101%);  border-left: 1px solid var(--rule); }
+  #app.show-index #sidebar { transform: translateX(0); }
+  #app.show-notes  #narr   { transform: translateX(0); }
+
+  #app.show-index #scrim, #app.show-notes #scrim { opacity: 1; pointer-events: auto; }
+
+  /* comfortable targets: 9px rows are fine with a mouse and hopeless with a thumb */
+  .nrow { padding: 9px 8px; margin-bottom: 5px; }
+  .nrow .lbl { font-size: 10.5px; }
+  #narrbody { padding: 14px 15px 40px; }
+  #narrbody .n-p { font-size: 11.5px; line-height: 1.75; }
+  #tabs button { padding: 11px 4px; font-size: 8.5px; }
+  #insp-body { padding: 12px 14px 40px; }
+
+  /* the card follows a cursor, and a finger is not one — pin it to the bottom */
+  #card {
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: 8px;
+    width: auto;
+    max-height: 46vh;
+    overflow-y: auto;
+  }
+
+  .nlabel { font-size: 8.5px; }
+
+  .drawer-btn {
+    display: flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    background: var(--panel-hi);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 5px 9px;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .drawer-btn.on { background: var(--mark); border-color: var(--ink-soft); color: var(--ink); }
+
+  #topbar { align-items: center; gap: 6px; padding: 0 8px; }
+  #topbar .stat { padding: 0 8px; border-right: 0; }
+  /* one stat is context; six is a wall on a phone */
+  #topbar .stat:not(.repo):not(.spacer) { display: none; }
+  #topbar .stat.repo { min-width: 0; }
+  #topbar .stat .v { font-size: 10px; }
+}
+
+@media (max-width: 480px) {
+  #sidebar, #narr { width: 86vw; }
+}

@@ -34,6 +34,7 @@ const SHELL = `
     </div>
   </div>
   <div id="botbar"></div>
+  <div id="scrim"></div>
 </div>`;
 
 /**
@@ -53,7 +54,12 @@ export function createBlueprint(DATA, opts = {}) {
   let frames = 0;
 
   root.innerHTML = SHELL;
+  const appEl    = root.querySelector('#app');
   const stage    = root.querySelector('#stage');
+  // A finger cannot hover. Following the pointer with a card that sits under
+  // the thumb is worse than useless, so on touch the card is pinned by CSS and
+  // only opened deliberately, by a tap.
+  const coarse = window.matchMedia('(hover: none), (pointer: coarse)').matches;
   const labelsEl = root.querySelector('#labels');
   const cardEl   = root.querySelector('#card');
   const inspEl   = root.querySelector('#inspector');
@@ -311,6 +317,8 @@ export function createBlueprint(DATA, opts = {}) {
     camera.updateProjectionMatrix();
   }
 
+  let fitted = false;
+
   function resize() {
     const w = stage.clientWidth, h = stage.clientHeight;
     // updateStyle must stay ON. Without it three sets only the canvas's width
@@ -321,6 +329,13 @@ export function createBlueprint(DATA, opts = {}) {
     // container's dimensions (labels, picking, fit) is off by the ratio.
     renderer.setSize(w, h);
     applyCamera();
+
+    /* Refit whenever the frame changes shape and the reader has not taken over.
+       The first layout pass often lands before the stylesheet's narrow-screen
+       rules have settled the stage's real size, so the initial fit can be
+       computed against the wrong box — which is how a phone ended up with the
+       drawing hanging off the left edge. This also handles rotating a device. */
+    if (fitted && !userMoved) fitAll();
   }
   const _ro = new ResizeObserver(resize); _ro.observe(stage);
 
@@ -685,12 +700,28 @@ export function createBlueprint(DATA, opts = {}) {
   (function topbar() {
     const el = root.querySelector('#topbar');
     const m = DATA.meta;
-    let html = `<div class="stat repo"><span class="k">Repository</span><span class="v">${esc(m.repo)}${m.branch ? ` <span class="branch">· ${esc(m.branch)}</span>` : ''}</span></div>`;
+    let html = `<button class="drawer-btn" data-drawer="index" type="button">index</button>`;
+    html += `<div class="stat repo"><span class="k">Repository</span><span class="v">${esc(m.repo)}${m.branch ? ` <span class="branch">· ${esc(m.branch)}</span>` : ''}</span></div>`;
     for (const s of (DATA.stats || [])) {
       html += `<div class="stat"><span class="k">${esc(s.label)}</span><span class="v">${esc(s.value)}</span></div>`;
     }
     html += `<div class="stat spacer"></div>`;
+    html += `<button class="drawer-btn" data-drawer="notes" type="button">notes</button>`;
     el.innerHTML = html;
+
+    // Only one drawer at a time: on a phone they each cover most of the screen.
+    el.addEventListener('click', ev => {
+      const b = ev.target.closest('.drawer-btn');
+      if (!b) return;
+      const cls = b.dataset.drawer === 'index' ? 'show-index' : 'show-notes';
+      const other = cls === 'show-index' ? 'show-notes' : 'show-index';
+      appEl.classList.remove(other);
+      appEl.classList.toggle(cls);
+      for (const btn of el.querySelectorAll('.drawer-btn')) {
+        btn.classList.toggle('on', appEl.classList.contains(
+          btn.dataset.drawer === 'index' ? 'show-index' : 'show-notes'));
+      }
+    });
   })();
 
   (function sidebar() {
@@ -718,7 +749,11 @@ export function createBlueprint(DATA, opts = {}) {
     el.addEventListener('mouseleave', () => setHover(null, null));
     el.addEventListener('click', ev => {
       const row = ev.target.closest('.nrow');
-      if (row) { focusNode(row.dataset.node); openInspector(row.dataset.node); }
+      if (row) {
+        focusNode(row.dataset.node);
+        openInspector(row.dataset.node);
+        if (coarse) closeDrawers();
+      }
     });
   })();
 
@@ -778,13 +813,23 @@ export function createBlueprint(DATA, opts = {}) {
   })();
 
   (function botbar() {
-    root.querySelector('#botbar').innerHTML =
+    // Keyboard hints are noise on a device with no keyboard, and "hover" is a
+    // promise a touchscreen cannot keep.
+    const keyHints =
         `<span><kbd>drag</kbd>pan</span>`
       + `<span><kbd>scroll</kbd>zoom</span>`
       + `<span><kbd>Q</kbd><kbd>E</kbd>rotate</span>`
       + `<span><kbd>F</kbd>fit</span>`
       + `<span><kbd>L</kbd>labels</span>`
-      + `<span><kbd>hover</kbd>read a block or a line</span>`
+      + `<span><kbd>hover</kbd>read a block or a line</span>`;
+
+    const touchHints =
+        `<span><kbd>drag</kbd>pan</span>`
+      + `<span><kbd>pinch</kbd>zoom</span>`
+      + `<span><kbd>tap</kbd>read a block or a line</span>`;
+
+    root.querySelector('#botbar').innerHTML =
+        (coarse ? touchHints : keyHints)
       + `<span class="right">${DATA.nodes.length} nodes · ${DATA.edges.length} connections`
       + `${DATA.meta.generated ? ' · ' + esc(DATA.meta.generated) : ''}</span>`;
   })();
@@ -951,8 +996,31 @@ export function createBlueprint(DATA, opts = {}) {
   /* ---------- pointer: pan / hover / select --------------------------------- */
 
   let dragging = false, dragged = false, last = null;
+  /* Until the reader moves the camera themselves, the view is ours to refit.
+     After that it is theirs, and resizing must not yank it away from them. */
+  let userMoved = false;
+
+  /* Every active pointer, so a second finger can turn a pan into a pinch
+     mid-gesture without the first one having to be lifted. */
+  const active = new Map();
+  let pinchFrom = 0;      // finger separation when the pinch began
+  let pinchZoom = 1;      // camera zoom at that moment
+
+  const spread = () => {
+    const [a, b] = [...active.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
 
   stage.addEventListener('pointerdown', ev => {
+    userMoved = true;
+    active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (active.size === 2) {
+      pinchFrom = spread();
+      pinchZoom = cam.zoomGoal;
+      dragging = false;          // a pinch is not a pan
+      dragged = true;            // ...and must not land as a tap
+      return;
+    }
     dragging = true; dragged = false;
     last = { x: ev.clientX, y: ev.clientY };
     stage.classList.add('dragging');
@@ -961,6 +1029,14 @@ export function createBlueprint(DATA, opts = {}) {
 
   stage.addEventListener('pointermove', ev => {
     mouseXY = { x: ev.clientX, y: ev.clientY };
+    if (active.has(ev.pointerId)) active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+    if (active.size === 2 && pinchFrom > 0) {
+      const now = spread();
+      cam.zoomGoal = THREE.MathUtils.clamp(pinchZoom * (now / pinchFrom), 0.3, 7);
+      cam.zoom = cam.zoomGoal;   // track the fingers exactly; easing feels laggy here
+      return;
+    }
     if (dragging && last) {
       const dx = ev.clientX - last.x, dy = ev.clientY - last.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragged = true;
@@ -977,10 +1053,14 @@ export function createBlueprint(DATA, opts = {}) {
       cam.target.copy(cam.targetGoal);
       return;
     }
-    setHover(pick(ev), ev);
+    if (!coarse) setHover(pick(ev), ev);
   });
 
   stage.addEventListener('pointerup', ev => {
+    active.delete(ev.pointerId);
+    if (active.size < 2) pinchFrom = 0;
+    // lifting one of two fingers should not snap the view to the other
+    if (active.size === 1) { last = [...active.values()][0]; dragging = true; return; }
     dragging = false; last = null;
     stage.classList.remove('dragging');
     try { stage.releasePointerCapture(ev.pointerId); } catch (_) {}
@@ -989,15 +1069,25 @@ export function createBlueprint(DATA, opts = {}) {
       if (h?.type === 'node') {
         if (selected === h.id) { closeInspector(); }
         else { selected = h.id; focusNode(h.id); openInspector(h.id); }
-      } else if (!h) { closeInspector(); }
+      } else if (h?.type === 'edge' && coarse) {
+        // no hover on touch, so a tap is the only way to read a connection
+        setHover(h, ev);
+      } else if (!h) { closeInspector(); if (coarse) setHover(null, null); }
       paintHighlight();
     }
   });
 
-  stage.addEventListener('pointerleave', () => { setHover(null, null); });
+  stage.addEventListener('pointercancel', ev => {
+    active.delete(ev.pointerId);
+    if (active.size < 2) pinchFrom = 0;
+    if (active.size === 0) { dragging = false; last = null; stage.classList.remove('dragging'); }
+  });
+
+  stage.addEventListener('pointerleave', () => { if (!coarse) setHover(null, null); });
 
   stage.addEventListener('wheel', ev => {
     ev.preventDefault();
+    userMoved = true;
     cam.zoomGoal = THREE.MathUtils.clamp(cam.zoomGoal * (ev.deltaY > 0 ? 0.9 : 1.111), 0.3, 7);
   }, { passive: false });
 
@@ -1047,8 +1137,19 @@ export function createBlueprint(DATA, opts = {}) {
     const { halfW, halfH } = frustumFor(1);
     const needW = Math.max((maxX - minX) / 2, 0.001);
     const needH = Math.max((maxY - minY) / 2, 0.001);
-    const PAD = 0.94;                       // breathing room + label overhang
+    /* Blocks are what we measure; labels are what hangs off the edges, and a
+       label is a fixed pixel width however far you zoom out. On a wide stage a
+       6% margin absorbs that. On a phone 6% is twenty pixels and a long name at
+       the left edge loses its first word, so the margin has to be much larger.
+
+       A corrective pass that measured the laid-out labels and zoomed to fit
+       them was tried and removed: shrinking the view changes which labels
+       survive the collision culler, which changes what needs fitting, and it
+       never settled. A fixed generous margin is cruder and actually converges. */
+    const narrow = Math.min(stage.clientWidth, stage.clientHeight) < 560;
+    const PAD = narrow ? 0.58 : 0.94;
     cam.zoomGoal = THREE.MathUtils.clamp(Math.min(halfW / needW, halfH / needH) * PAD, 0.3, 7);
+    baseZoom = cam.zoomGoal;
 
     selected = null;
     paintHighlight();
@@ -1056,6 +1157,7 @@ export function createBlueprint(DATA, opts = {}) {
 
   window.addEventListener('keydown', ev => {
     const k = ev.key.toLowerCase();
+    if ('qefl'.includes(k)) userMoved = true;
     if (k === 'q') { cam.yawStep--; cam.yawGoal = cam.yawStep * Math.PI / 2; }
     else if (k === 'e') { cam.yawStep++; cam.yawGoal = cam.yawStep * Math.PI / 2; }
     else if (k === 'f') fitAll();
@@ -1067,6 +1169,10 @@ export function createBlueprint(DATA, opts = {}) {
      7. loop
      ========================================================================== */
 
+  /* The zoom the drawing settles at when framed. Labels hide below a fraction
+     of it rather than below a fixed number: a 40-block graph on a phone fits at
+     0.49, and a hard 0.5 floor meant the default view had no labels at all. */
+  let baseZoom = 1;
   let running = true;
   document.addEventListener('visibilitychange', () => { running = !document.hidden && alive; if (running) tick(); }, { signal });
 
@@ -1106,7 +1212,9 @@ export function createBlueprint(DATA, opts = {}) {
     // show up as a misplaced label rather than as silently wrong coordinates.
     const W = renderer.domElement.clientWidth || stage.clientWidth;
     const H = renderer.domElement.clientHeight || stage.clientHeight;
-    const showAll = labelsOn && cam.zoom > 0.5;
+    // Always legible at the default framing; fade out only when the reader has
+    // pulled further back than that.
+    const showAll = labelsOn && cam.zoom > Math.min(0.5, baseZoom * 0.92);
 
     measureLabels();
 
@@ -1195,6 +1303,12 @@ export function createBlueprint(DATA, opts = {}) {
      8. the inspector — everything about one block, on click
      ========================================================================== */
 
+  function closeDrawers() {
+    appEl.classList.remove('show-index', 'show-notes');
+    for (const b of root.querySelectorAll('.drawer-btn')) b.classList.remove('on');
+  }
+  root.querySelector('#scrim').addEventListener('click', closeDrawers);
+
   const inspKind = inspEl.querySelector('.kind');
   const inspTitle = inspEl.querySelector('h2');
   const inspSum = inspEl.querySelector('.sum');
@@ -1269,6 +1383,7 @@ export function createBlueprint(DATA, opts = {}) {
     inspBody.innerHTML = inspectorHTML(n);
     inspBody.scrollTop = 0;
     inspEl.classList.add('on');
+    if (coarse) { appEl.classList.remove('show-index'); appEl.classList.add('show-notes'); }
     if (opts.onSelect) opts.onSelect(id);
   }
 
@@ -1295,6 +1410,7 @@ export function createBlueprint(DATA, opts = {}) {
      ========================================================================== */
 
   resize();
+  fitted = true;
   if (opts.camera) {
     cam.targetGoal.set(opts.camera.x || 0, 0, opts.camera.z || 0);
     cam.target.copy(cam.targetGoal);
@@ -1302,6 +1418,7 @@ export function createBlueprint(DATA, opts = {}) {
     cam.yawStep = opts.camera.yawStep || 0;
     cam.yawAngle = cam.yawGoal = cam.yawStep * Math.PI / 2;
     applyCamera();
+    userMoved = true;          // a restored camera is the reader's, not ours
   } else {
     fitAll();
   }

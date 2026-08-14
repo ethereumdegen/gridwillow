@@ -449,6 +449,23 @@
     .stats div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
     .navlinks a.hide-sm { display: none; }
   }
+
+  @media (max-width: 620px) {
+    /* The wordmark and the section links were fighting for the same row and
+       overlapping. On a phone the only link that earns its place is GitHub;
+       the sections are a scroll away. */
+    .navlinks a:not(:last-child) { display: none; }
+    nav { padding: 16px var(--pad); }
+
+    /* "scroll to zoom · click a block" is advice for a mouse, and it was being
+       clipped anyway. */
+    .frame-hint { display: none; }
+    .frame iframe { height: min(78vh, 620px); }
+
+    h1 { max-width: none; }
+    .lede { font-size: 15px; }
+    .stats div { padding: 16px 16px; }
+  }
 </style>
 </head>
 <body>
@@ -474,13 +491,13 @@
   <header class="hero-inner" style="padding-top:0">
     <span class="pill"><span class="dot"></span>Open source · A diagram language</span>
 
-    <h1>Your architecture,<br>drawn in three<br>dimensions.</h1>
+    <h1>Every connection<br>has to name<br>something real.</h1>
 
     <p class="lede">
       Gridwillow is a small text language for describing software systems — services,
       databases, queues, and the data that actually moves between them. Write a plain
       file, get an isometric blueprint you can pan, hover and click through.
-      <strong>Mermaid, if Mermaid had depth and a reason to be looked at twice.</strong>
+      <strong>Your architecture, drawn in three dimensions.</strong>
     </p>
 
     <div class="cta">

@@ -218,7 +218,15 @@ devicePixelRatio 1 look perfect and can never catch it.
 ```bash
 node scripts/shoot.mjs examples/payments.bp --zoom 0.5,1,2,4 --dpr 1,2
 node scripts/shoot.mjs examples/payments.bp --focus orders --inspect
+node scripts/shoot.mjs examples/payments.bp --mobile      # 390x844, real touch
 ```
+
+`--mobile` drives actual touch events through CDP rather than synthesising mouse
+input, because the failure it exists to catch is invisible to a mouse: with the
+default `touch-action`, the browser claims a drag as a page scroll and cancels
+the pointer stream, which looks exactly like a renderer that ignores input. It
+asserts panning moves the camera, a pinch changes zoom by the expected ratio,
+the drawing gets the full width, and the drawers open and dismiss.
 
 ## Building the app
 
