@@ -1,4 +1,7 @@
 node_modules/
-*.blueprint.html
-!examples/self.blueprint.html
 .DS_Store
+
+# Built blueprints are artifacts — except the ones in examples/, which are
+# committed on purpose so the repo can be browsed without running anything.
+*.blueprint.html
+!examples/*.blueprint.html
