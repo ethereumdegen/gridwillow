@@ -1,0 +1,588 @@
+blueprint metalcraft-code
+  title Remote Coding Workspaces
+  tagline a rust api turns github repos into live sprites.dev coding boxes
+  stamp edition 2024 · rust 1.91 · vite react
+
+stat Runtime = 2 Railway services from one image
+stat Binaries = metalcraft-code · codeworker · migrate
+stat API = 21 routes under /api/v1 plus /health and /ready
+stat Tables = users · github_installations · workspaces · runs
+stat Workspaces = one sprites.dev sprite per workspace at /workspace/app
+stat Tokens = GitHub installation tokens minted on demand, never stored
+
+group callers "Callers"
+  note browser humans and agent tools hit the same origin
+
+ext agent_pod "metalcraft-agent"
+  is the tool-calling pod that drives remote code through HTTP
+  why >
+    It calls the API with a Bearer mck_ token rather than mounting a repo locally.
+    The README names the mcode_* tool pack as the intended caller, which is why the
+    API exposes file, exec, git, build and smoke-test operations as first-class routes.
+  src README.md
+  uses metalcraft-agent
+
+ext browser_user "Browser user"
+  is the human operator using the embedded web app
+  why >
+    The browser flow is not separate from the agent flow. It authenticates through
+    the shared Metalcraft ID session cookie, connects GitHub, creates workspaces,
+    and then uses the same JSON API the agent uses.
+  src frontend/src/routes/Home.tsx frontend/src/routes/WorkspaceDetail.tsx
+  uses react
+
+app spa "React workspace UI" x1.2
+  is the Vite SPA for GitHub connection, workspace list and in-browser editing
+  why >
+    It has only two routes, / and /w/:id. The detail page is a small remote IDE:
+    file tree, textarea editor, command box and git buttons, all backed by
+    same-origin fetch calls with credentials included.
+  src frontend/src/App.tsx frontend/src/routes/Home.tsx frontend/src/routes/WorkspaceDetail.tsx frontend/src/lib/api.ts
+  uses react react-router-dom vite tailwindcss
+  list Routes = /, /w/:id
+
+entry static_spa "Embedded SPA fallback"
+  is Axum's rust-embed fallback serving frontend/dist
+  why >
+    The Docker build compiles Vite first, then rust-embed bakes the dist directory
+    into the Rust binary. Unknown paths return index.html, so deep links such as
+    /w/:id survive a reload without a separate web server.
+  src backend/src/static_assets.rs Dockerfile
+  uses rust-embed mime_guess
+  fact Folder = ../frontend/dist/
+
+group edge "API edge"
+  note one Axum router, auth extracted per protected route
+
+entry api_server "Axum API server" x1.6
+  is the metalcraft-code binary: REST API plus embedded SPA
+  why >
+    main.rs loads Config, builds a lazy Postgres pool, creates AppState and binds
+    dual-stack [::]:PORT with an IPv4 fallback for Railway. build_router owns every
+    route, then falls through to the SPA asset handler.
+  src backend/src/main.rs backend/src/lib.rs backend/src/controllers/api_v1.rs
+  uses axum tower-http tokio sqlx reqwest
+  num API routes = 21
+  env DATABASE_URL PORT BASE_URL RUST_LOG
+
+svc auth_bridge "Auth bridge" x1.2
+  is Principal extraction from mc_session cookies or Bearer mck_ PATs
+  why >
+    Browser sessions are verified offline against the hub JWKS. PATs are
+    introspected at the hub /verify endpoint and carry scopes; mutating routes
+    call require_write, while a session gets full owner access.
+  src backend/src/middleware/auth.rs backend/src/services/hub.rs
+  uses axum-extra jsonwebtoken reqwest
+  fact Cookie = mc_session
+  fact PAT prefix = mck_
+  env HUB_BASE_URL HUB_INTERNAL_URL
+
+svc github_flow "GitHub install flow"
+  is the browser callback that stores GitHub App installation metadata
+  why >
+    /github/install sends the user to github.com/apps/<slug>/installations/new.
+    The callback trusts the session, not the query state, resolves the installation
+    through an App JWT, and stores only account metadata plus installation_id.
+  src backend/src/controllers/github.rs
+  uses sqlx
+  list Routes = GET /api/v1/github/install, GET /api/v1/github/callback, GET /api/v1/github/installations, GET /api/v1/github/repos
+
+ext hub "Metalcraft ID hub"
+  is the shared identity service for sessions and PAT introspection
+  why >
+    It owns the mc_session cookie and the /verify endpoint for mck_ personal
+    access tokens. Metalcraft Code mirrors users locally after successful auth
+    but does not issue identity itself.
+  src README.md backend/src/services/hub.rs backend/src/middleware/auth.rs
+  uses jwks jwt
+
+lib github_app "GitHub App client" x1.2
+  is RS256 App JWT signing and short-lived installation token minting
+  why >
+    It calls GitHub App endpoints directly with reqwest. Tokens are scoped to
+    contents:write and workflows:write, optionally narrowed to the workspace repo,
+    and are passed to git through a credential helper instead of being embedded in URLs.
+  src backend/src/services/github_app.rs
+  uses jsonwebtoken reqwest serde
+  fact API = https://api.github.com
+  fact Token lifetime = about 1 hour
+  env GITHUB_APP_ID GITHUB_APP_SLUG GITHUB_APP_PRIVATE_KEY GITHUB_APP_PRIVATE_KEY_PATH GITHUB_APP_WEBHOOK_SECRET
+
+ext github_api "GitHub API"
+  is the external App, repo and git authority
+  why >
+    It supplies installation metadata, repository listings, installation access
+    tokens and commit refs. The service needs Contents read/write, Workflows
+    read/write and Metadata read-only permissions.
+  src README.md docs/GITHUB_APP_SETUP.md
+  uses github
+
+svc workspace_api "Workspace lifecycle API" x1.3
+  is create, list, delete, hibernate and wake for workspace rows
+  why >
+    Creating a workspace only inserts a queued row; cloning is deliberately a later
+    route so provisioning cannot wedge on a slow repository. Hibernate takes a
+    sprites.dev checkpoint when possible, and wake restores it before marking ready.
+  src backend/src/controllers/workspaces.rs backend/src/models/workspace.rs
+  uses sqlx uuid
+  list Statuses = queued, provisioning, ready, hibernated, failed, deleted
+  list Routes = GET|POST /api/v1/workspaces, GET|DELETE /api/v1/workspaces/{id}, POST /api/v1/workspaces/{id}/hibernate, POST /api/v1/workspaces/{id}/wake
+
+svc ops_api "Workspace ops API" x1.8
+  is file, exec, git, build, test, actions, expose and run-history routes
+  why >
+    This is the agent-facing surface. Dynamic paths, command text, file content,
+    commit messages and git tokens are base64-encoded before they reach the in-sprite
+    shell, and command output is clamped before it is returned or recorded.
+  src backend/src/controllers/workspace_ops.rs backend/src/models/run.rs
+  uses base64 serde sqlx
+  num Max file read = 1 MiB
+  num Max output = 256 KiB
+  list Routes = files, exec, git, build, test, actions, expose, runs
+
+svc run_recorder "Run recorder"
+  is the audit writer for clone, exec, git, build, test and actions
+  why >
+    record_run writes a runs row with kind, command, exit code, output and timing.
+    The API exposes list/get routes so an agent or browser can recover what happened
+    after a long command finishes.
+  src backend/src/controllers/workspace_ops.rs backend/src/models/run.rs
+  uses sqlx
+  list Kinds = exec, clone, build, test, git, actions
+
+group orchestration "Workspace orchestration"
+  note queued rows become sprites; ready sprites receive commands
+
+worker codeworker "Codeworker" x1.4
+  is the second Railway service that provisions and reaps workspaces
+  why >
+    It polls the database every WORKER_POLL_SECS, claims one queued row using
+    FOR UPDATE SKIP LOCKED, creates a sprite, prepares /workspace/app, and marks
+    the row ready. A sibling reaper fails stale provisioning rows and hibernates
+    idle ready workspaces every minute.
+  src backend/src/bin/codeworker.rs backend/src/worker/mod.rs
+  uses tokio sqlx
+  fact Claim = FOR UPDATE SKIP LOCKED
+  fact Reaper period = 60 s
+  env WORKER_POLL_SECS WORKSPACE_IDLE_MINUTES WORKSPACE_STALE_MINUTES SPRITES_TOKEN
+
+lib sprites_client "Sprites REST client" x1.3
+  is a thin reqwest wrapper over api.sprites.dev/v1
+  why >
+    It creates and deletes sprites, runs bash through the non-TTY exec endpoint,
+    starts detached commands for build/test, checkpoints disks, restores checkpoints,
+    and flips URL privacy for smoke tests.
+    The client deliberately keeps the API envelope parsing defensive because the
+    sprites.dev list response has shifted across versions.
+  src backend/src/services/sprites.rs
+  uses reqwest serde
+  fact Base URL = https://api.sprites.dev/v1
+  list Endpoints = /sprites, /sprites/{name}/exec, /sprites/{name}/checkpoints, /sprites/{name}/checkpoints/{id}/restore
+  env SPRITES_TOKEN
+
+ext sprites_dev "sprites.dev"
+  is the external workspace compute platform
+  why >
+    Metalcraft Code treats sprites.dev as the machine provider, not as a code host.
+    Each workspace gets one private sprite by default; public exposure is temporary
+    and explicit for smoke tests.
+  src README.md backend/src/services/sprites.rs
+  uses sprites.dev
+
+server live_sprite "Live sprite workspace" x1.3
+  is one ephemeral Linux box with the repo at /workspace/app
+  why >
+    The sprite holds the mutable working tree. File reads, writes, arbitrary bash,
+    git commands and detached build/test logs all execute there, while the database
+    stores only metadata and audit output.
+  src backend/src/services/sprites.rs backend/src/controllers/workspace_ops.rs
+  uses bash git
+  fact Workdir = /workspace/app
+  fact Name = mc-code-<workspace uuid prefix>
+
+lib shell_jail "Shell jail"
+  is path validation plus in-sprite realpath checks around shell scripts
+  why >
+    validate_rel_path rejects absolute paths and any .. segment before a request is
+    sent. The script still runs realpath inside the sprite and aborts if the target
+    escapes /workspace/app, so the API does not rely on client-side normalization alone.
+  src backend/src/util.rs backend/src/controllers/workspace_ops.rs
+  uses base64 realpath bash
+  fact Workdir = /workspace/app
+
+svc git_ops "Git operations"
+  is clone, status, diff, commit, push and pull with App installation tokens
+  why >
+    A workspace either pins an installation_id or falls back to the user's newest
+    installation. Tokens are minted just before use, redacted from returned output,
+    and supplied through a temporary credential helper.
+  src backend/src/controllers/workspace_ops.rs backend/src/services/github_app.rs
+  uses git github
+  list Ops = clone, status, diff, commit, push, pull
+
+job build_test "Build and test runner"
+  is detached long-running commands with log polling and run rows
+  why >
+    Build and test share mechanics: start a background script on the sprite, poll a
+    log file until the command finishes or BUILD_TIMEOUT expires, then record the
+    result. This keeps HTTP calls bounded while allowing slow project commands.
+  src backend/src/controllers/workspace_ops.rs
+  uses bash tokio
+  num Timeout = 600 s
+
+svc actions_config "Actions configurator"
+  is the route that writes GitHub Actions workflow files in the workspace
+  why >
+    It writes .github/workflows/<filename> through the same jailed shell path and can
+    optionally commit the change. The GitHub App permissions include workflows:write,
+    so a later push activates the workflow.
+  src backend/src/controllers/workspace_ops.rs
+  uses github-actions git
+  fact Path = .github/workflows/<filename>
+
+group persistence "Persistence and deployment"
+  note metadata in Neon; source code remains inside sprites
+
+db neon "Neon Postgres" x1.4
+  is the system of record for users, installations, workspaces and runs
+  why >
+    The pool is lazy so /health can answer while Neon cold-starts. The schema keeps
+    GitHub tokens out of storage; only installation_id and account metadata persist.
+    Workspace rows carry status, sprite name, checkpoint id, logs and errors.
+  src migrations/001_init.sql backend/src/db.rs backend/src/models
+  uses postgres sqlx neon
+  list Tables = users, github_installations, workspaces, runs, schema_migrations
+  list Indexes = idx_github_installations_user, idx_workspaces_user, idx_workspaces_status, idx_runs_workspace
+  env DATABASE_URL
+
+job migrate "Manual migrator"
+  is the migrate binary applying migrations/NNN_*.sql in order
+  why >
+    Deployment does not auto-migrate on boot. railway.toml and the Dockerfile both
+    say migrations are run manually with ./migrate against DATABASE_URL, and the
+    binary records applied files in schema_migrations.
+  src backend/src/bin/migrate.rs migrations/001_init.sql railway.toml Dockerfile
+  uses sqlx
+  fact Policy = manual, never on boot
+  env DATABASE_URL
+
+bucket r2_archive "R2 archive handle" !dormant
+  is an optional private S3-compatible bucket wrapper
+  why >
+    AppState constructs S3Service when S3_* credentials are complete, but the current
+    route surface does not yet consume it. The workspace model already has
+    snapshot_key and the service has deterministic code/<user>/<workspace>/<label>.tar.zst keys.
+  src backend/src/services/s3.rs backend/src/lib.rs backend/src/models/workspace.rs
+  uses rust-s3 cloudflare-r2
+  fact Key pattern = code/{user}/{workspace}/{label}.tar.zst
+  env S3_ENDPOINT S3_REGION S3_BUCKET S3_PATH_STYLE S3_ACCESS_KEY S3_SECRET_KEY
+
+config image_build "Single Docker image"
+  is one container build containing the SPA and all three Rust binaries
+  why >
+    The Dockerfile builds frontend/dist first, copies it into the Rust build context
+    for rust-embed, and then copies metalcraft-code, codeworker and migrate into the
+    runtime image. Railway runs API and worker as separate services from that image.
+  src Dockerfile railway.toml
+  uses docker railway node rust
+  fact Runtime CMD = ./metalcraft-code
+
+# ------------------------------------------------------------------
+# connections
+# ------------------------------------------------------------------
+
+agent_pod -call-> api_server "tool request"
+  carry Bearer mck_ + /api/v1/workspaces/{id}/exec
+  why >
+    Agent tools call the REST surface directly. If the PAT lacks write scope, mutating
+    routes fail before touching the workspace.
+  vol 0.8
+
+browser_user -call-> static_spa "web page"
+  carry GET / and GET /w/:id
+  why >
+    Human users load the same binary that serves the API. SPA fallback means the
+    server can return index.html for deep links.
+  vol 0.5
+
+static_spa -data-> spa "compiled assets"
+  carry Assets::get("index.html") and frontend/dist bundles
+  why >
+    rust-embed turns Vite output into bytes inside the Rust binary. If the build did
+    not copy frontend/dist first, the fallback returns 404.
+  vol 0.4
+
+browser_user -call-> api_server "session api"
+  carry mc_session cookie + GET /api/v1/whoami
+  why >
+    The browser uses the same API as the agent, but credentials are cookies instead
+    of PAT headers. A 401 in the frontend redirects to /login.
+  vol 0.6
+
+spa -call-> api_server "json fetches"
+  carry fetch('/api/v1/workspaces', { credentials: 'include' })
+  why >
+    frontend/src/lib/api.ts centralizes every call. Errors unwrap the backend's
+    { error } JSON shape and unauthorized responses bounce to the hub login flow.
+  vol 0.7
+
+api_server -call-> auth_bridge "principal"
+  carry Principal::from_request_parts
+  why >
+    Protected handlers take Principal as an extractor. Failure returns the uniform
+    ApiError JSON response before the handler body runs.
+  vol 0.9
+
+auth_bridge -call-> hub "identity check"
+  carry GET /.well-known/jwks.json or POST /verify
+  why >
+    Cookies are verified locally with cached JWKS; PATs are introspected remotely.
+    If an unknown kid appears, the JWKS cache is refetched.
+  vol 0.7
+
+api_server -call-> github_flow "github routes"
+  carry GET /api/v1/github/install and /callback
+  why >
+    build_router sends the GitHub endpoints to controllers/github.rs. The callback
+    needs an authenticated session so installation ownership is tied to the user.
+  vol 0.3
+
+github_flow -call-> github_app "app jwt"
+  carry GithubApp::get_installation and installation_token
+  why >
+    The controller delegates signing and GitHub HTTP calls to the service. Misconfigured
+    App credentials produce a 503 or 502 rather than storing incomplete rows.
+  vol 0.3
+
+github_app -call-> github_api "installation token"
+  carry POST /app/installations/{id}/access_tokens
+  why >
+    Tokens are minted on demand for repo listing and git operations. A failed GitHub
+    response becomes a bad gateway error to the API caller.
+  vol 0.5
+
+github_flow -write-> neon "installation row"
+  carry INSERT INTO github_installations ON CONFLICT (installation_id)
+  why >
+    The callback records installation ownership and account metadata only. Long-lived
+    GitHub credentials are never written to the database.
+  vol 0.3
+
+api_server -call-> workspace_api "lifecycle routes"
+  carry POST /api/v1/workspaces { repo_full_name, branch, installation_id }
+  why >
+    The router splits lifecycle from interactive operations. Create writes a queued
+    row and returns immediately.
+  vol 0.6
+
+workspace_api -write-> neon "workspace state"
+  carry INSERT INTO workspaces (... status = 'queued')
+  why >
+    The database queue is the handoff to the worker. Ownership is enforced by user_id
+    on load, list and mutation.
+  vol 0.7
+
+neon -data-> codeworker "queued row"
+  carry SELECT id FROM workspaces WHERE status = 'queued' FOR UPDATE SKIP LOCKED
+  why >
+    This is the queue discipline. Multiple workers can run without claiming the same
+    workspace, and an empty queue just sleeps for WORKER_POLL_SECS.
+  vol 0.6
+
+codeworker -call-> sprites_client "provision sprite"
+  carry create_sprite(name) then exec('mkdir -p /workspace/app')
+  why >
+    Provisioning creates a private sprite and runs a minimal setup script. Slow clone
+    operations are intentionally excluded from this path.
+  vol 0.5
+
+sprites_client -call-> sprites_dev "sprite api"
+  carry POST /v1/sprites and POST /v1/sprites/{name}/exec
+  why >
+    All compute operations leave through this client. Missing SPRITES_TOKEN lets the
+    app boot but causes provisioning to fail cleanly.
+  vol 0.8
+
+sprites_dev -spawn-> live_sprite "linux box"
+  carry sprite named mc-code-<uuid prefix>
+  why >
+    sprites.dev owns the actual Linux environment. Metalcraft Code records the sprite
+    name and URL so later operations know where to execute.
+  vol 0.6
+
+codeworker -write-> neon "ready marker"
+  carry UPDATE workspaces SET status = 'ready', logs, last_active_at
+  why >
+    The worker records success only after the setup marker appears in command output.
+    Failures write status failed, append logs, and best-effort delete the sprite.
+  vol 0.5
+
+workspace_api -call-> sprites_client "sleep wake delete"
+  carry checkpoint(), restore(checkpoint_id), delete_sprite(name)
+  why >
+    Lifecycle routes and the reaper use sprites.dev checkpoints for hibernation.
+    Wake verifies the sprite still exists before marking the workspace ready.
+  vol 0.4
+
+api_server -call-> ops_api "agent operations"
+  carry POST /api/v1/workspaces/{id}/{exec,git,build,test,actions}
+  why >
+    The high-volume API surface is isolated in workspace_ops.rs. Every handler loads
+    the owned workspace and requires ready status before reaching the live sprite.
+  vol 0.9
+
+ops_api -call-> shell_jail "safe script"
+  carry validate_rel_path() + jail_prelude()
+  why >
+    File and workflow operations are checked before and inside the sprite. This is
+    the defense against path traversal and shell injection from remote callers.
+  vol 0.7
+
+shell_jail -call-> sprites_client "exec script"
+  carry SpritesClient::exec(sprite, bash -lc script)
+  why >
+    The jail builds shell snippets; the sprites client transports them. Transport
+    failures become HTTP errors rather than partial local writes.
+  vol 0.8
+
+ops_api -call-> git_ops "git command"
+  carry GitBody { op, message, branch }
+  why >
+    Git commands need extra token handling, so they are kept behind a dedicated branch
+    of workspace_ops.rs. Output is redacted before it leaves the server.
+  vol 0.5
+
+git_ops -call-> github_app "repo token"
+  carry mint_git_token(ws) -> installation_token(... repositories)
+  why >
+    Clone, push and pull need a fresh installation token. If the workspace has a repo,
+    the token request is narrowed to that repository name.
+  vol 0.5
+
+git_ops -call-> shell_jail "credential helper"
+  carry git -C /workspace/app status|diff|commit|push|pull
+  why >
+    Git runs inside the sprite working tree, not on the API host. The helper supplies
+    the token without putting it into the remote URL.
+  vol 0.5
+
+ops_api -call-> build_test "long command"
+  carry BuildBody { cmd }
+  why >
+    Build and test are explicit routes because they may outlive a normal request. The
+    caller gets a Run row instead of an unbounded HTTP stream.
+  vol 0.4
+
+build_test -spawn-> sprites_client "detached exec"
+  carry exec_detached(... max_run_after_disconnect = 600s)
+  why >
+    The command keeps running after the HTTP exec disconnects. Separate short execs
+    poll the log file until completion or timeout.
+  vol 0.4
+
+ops_api -call-> actions_config "workflow write"
+  carry ActionsBody { filename, yaml, commit }
+  why >
+    This route writes a GitHub Actions workflow into the workspace and can commit it.
+    Pushing is separate so activation remains caller-controlled.
+  vol 0.2
+
+actions_config -call-> shell_jail "workflow file"
+  carry .github/workflows/<filename>
+  why >
+    The workflow file uses the same path jail and base64 content handling as ordinary
+    file writes. Invalid filenames never reach the sprite unchecked.
+  vol 0.2
+
+ops_api -call-> run_recorder "audit event"
+  carry record_run(kind, cmd, exit_code, output)
+  why >
+    Clone, exec, git, build, test and actions all become durable audit rows. This is
+    the read model behind /runs and /runs/{run_id}.
+  vol 0.7
+
+run_recorder -write-> neon "run row"
+  carry INSERT INTO runs (workspace_id, kind, cmd, status, exit_code, output)
+  why >
+    The run table stores bounded output and timings. Without it, a detached build
+    would finish with no durable result for the browser or agent to inspect.
+  vol 0.7
+
+api_server -read-> neon "readiness probe"
+  carry SELECT 1 for GET /ready
+  why >
+    /health avoids the database, but /ready performs a real query. Railway can know
+    whether the server process is alive separately from whether Neon is reachable.
+  vol 0.3
+
+migrate -write-> neon "schema changes"
+  carry migrations/001_init.sql and schema_migrations
+  why >
+    The image ships migrate, but boot never runs it. Operators apply migrations
+    manually, and applied filenames prevent repeat execution.
+  vol 0.1
+
+api_server -call-> r2_archive "optional bucket"
+  carry AppState::new -> S3Service::new(config)
+  why >
+    The current code initializes the handle when credentials are present but has no
+    active snapshot routes. The dormant edge is retained so readers notice the planned
+    storage hook without mistaking it for live traffic.
+  vol 0.1
+
+image_build -data-> static_spa "embedded dist"
+  carry COPY --from=frontend /app/frontend/dist ./frontend/dist
+  why >
+    The Rust compile needs the frontend build output present because rust-embed reads
+    it at compile time.
+  vol 0.2
+
+image_build -data-> api_server "runtime binary"
+  carry target/release/metalcraft-code, codeworker, migrate
+  why >
+    One Docker image contains all executables. Railway changes the start command to
+    choose API or worker behavior.
+  vol 0.2
+
+# ------------------------------------------------------------------
+# narrative
+# ------------------------------------------------------------------
+
+tab what "What it does"
+  h Remote Coding Workspaces
+  p >
+    The system turns a GitHub repository into a live machine. A [[browser user|browser_user]]
+    or [[metalcraft-agent|agent_pod]] enters through the [[Axum API|api_server]],
+    proves identity at the [[auth bridge|auth_bridge]], and creates a row in
+    [[Neon Postgres|neon]]. The [[codeworker|codeworker]] notices that row, asks
+    [[sprites.dev|sprites_dev]] for a private Linux box, prepares /workspace/app,
+    and marks the workspace ready.
+  p >
+    After that, the hot path is command transport. [[Workspace ops|ops_api]] turns
+    file edits, shell commands, git operations, build/test runs and workflow writes
+    into guarded scripts for the [[live sprite|live_sprite]]. The API host stores
+    metadata and audit output; the mutable source tree stays inside the sprite.
+  note >
+    The surprising split is clone. Provisioning creates an empty workspace only;
+    repository clone is an explicit later operation so a slow GitHub checkout cannot
+    block the worker queue.
+
+tab built "How it's built"
+  h Boring queue, explicit trust boundaries
+  p >
+    There is no message broker. The database is the queue: [[workspace rows|neon]]
+    move queued → provisioning → ready, and the worker claims them with
+    {{skip locked}}. Auth is delegated to {{Metalcraft ID}}; browser cookies verify
+    against JWKS and PATs are checked through /verify.
+  p >
+    GitHub credentials are short-lived. The [[GitHub App client|github_app]] signs
+    an App JWT, mints an installation token for the selected repo, hands it to
+    [[git operations|git_ops]], and redacts it from output. Long commands go through
+    the [[build/test runner|build_test]], which records results in [[run history|run_recorder]].
+  p >
+    Deployment is one [[Docker image|image_build]] with three binaries. The API serves
+    the [[embedded React app|static_spa]], the worker runs separately from the same
+    image, and [[migrations|migrate]] are intentionally manual.
+
+term "skip locked" = PostgreSQL's FOR UPDATE SKIP LOCKED queue pattern: concurrent workers skip rows another worker has claimed
+term "Metalcraft ID" = the shared identity hub that issues mc_session cookies and introspects mck_ personal access tokens
