@@ -422,37 +422,7 @@
     color: var(--ink-2);
   }
 
-  .keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
-  .keys kbd {
-    font-family: var(--mono);
-    font-size: 11px;
-    background: var(--white);
-    border: 1px solid var(--line);
-    border-bottom-width: 2px;
-    border-radius: 5px;
-    padding: 3px 7px;
-    color: var(--ink-2);
-  }
-  .keys span { font-size: 12.5px; color: var(--faint); align-self: center; margin: 0 12px 0 2px; }
 
-  /* ---------- quickstart ---------- */
-
-  .start { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(28px, 4vw, 60px); margin-top: 42px; align-items: start; }
-  .steps { display: flex; flex-direction: column; gap: 22px; }
-  .step { display: flex; gap: 15px; }
-  .step .num {
-    flex: 0 0 auto;
-    width: 25px; height: 25px;
-    border-radius: 50%;
-    background: var(--ink);
-    color: #fff;
-    font-size: 12px;
-    font-weight: 620;
-    display: grid;
-    place-items: center;
-  }
-  .step h3 { font-size: 15.5px; font-weight: 620; margin-bottom: 5px; }
-  .step p { font-size: 14px; line-height: 1.6; color: var(--muted); }
 
   /* ---------- footer ---------- */
 
@@ -471,7 +441,7 @@
   .flinks { display: flex; gap: 22px; }
 
   @media (max-width: 900px) {
-    .split, .start, .flow { grid-template-columns: 1fr; }
+    .split, .flow { grid-template-columns: 1fr; }
     .callout { grid-template-columns: 1fr; }
     .cols { grid-template-columns: 1fr; }
     .stats { grid-template-columns: repeat(2, 1fr); }
@@ -495,10 +465,8 @@
       Gridwillow
     </a>
     <div class="navlinks">
-      <a href="#language" class="hide-sm">Language</a>
-      <a href="#agent" class="hide-sm">Agents</a>
-      <a href="#app" class="hide-sm">The app</a>
-      <a href="#start">Install</a>
+      <a href="#language">Language</a>
+      <a href="#agent">Agents</a>
       <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
     </div>
   </nav>
@@ -728,128 +696,6 @@
           paths that moved, functions that were deleted, tables that were added — because
           a diagram that is quietly wrong is worse than none.
         </p>
-      </div>
-    </div>
-  </section>
-</div>
-
-<div class="sheet" id="app">
-  <section class="band">
-    <span class="eyebrow">Blueprint → screen</span>
-    <h2>Save the file. Watch it redraw.</h2>
-    <p class="sub">
-      The desktop app opens a <code style="font-family:var(--mono);font-size:14px">.bp</code>,
-      compiles it, and watches it. Edit in whatever editor you already have; the drawing
-      follows on every save, keeping the camera exactly where you left it.
-    </p>
-
-    <div class="flow">
-      <div class="stage">
-        <span class="tag">the file</span>
-        <h3>Rust owns it</h3>
-        <p>
-          The app parses and compiles in Rust, then pushes the result into the webview.
-          A filesystem watcher coalesces the burst of events an editor makes when it
-          saves, so one save is one redraw.
-        </p>
-        <div class="out">notify → parse → compile → emit</div>
-      </div>
-      <div class="stage">
-        <span class="tag">the drawing</span>
-        <h3>Same renderer as the export</h3>
-        <p>
-          The webview runs the identical three.js renderer that
-          <code style="font-family:var(--mono);font-size:11.5px">bp export</code> inlines
-          into standalone HTML. The app's assets are assembled from it at build time, so
-          the two cannot drift apart.
-        </p>
-        <div class="out">renderer/blueprint.js</div>
-      </div>
-      <div class="stage">
-        <span class="tag">mistakes</span>
-        <h3>Errors don't blank it</h3>
-        <p>
-          A file that stops parsing keeps the last good drawing on screen and shows the
-          errors over it. Blanking the window on every half-typed line is the fastest way
-          to make a live-reload loop useless.
-        </p>
-        <div class="out">error · line 84 · caret</div>
-      </div>
-    </div>
-
-    <div class="callout">
-      <span class="mark">Controls</span>
-      <div>
-        <p>
-          Rotation is locked to four ninety-degree snaps and the camera is orthographic,
-          pinned to the isometric axis. Free orbit isn't offered on purpose — the moment
-          you can tumble to an arbitrary angle it stops reading as an engineering drawing.
-        </p>
-        <div class="keys">
-          <kbd>drag</kbd><span>pan</span>
-          <kbd>scroll</kbd><span>zoom</span>
-          <kbd>Q</kbd><kbd>E</kbd><span>rotate</span>
-          <kbd>F</kbd><span>fit</span>
-          <kbd>L</kbd><span>labels</span>
-          <kbd>Esc</kbd><span>deselect</span>
-        </div>
-        <p style="margin-top:14px">
-          Exporting from the app writes the same self-contained HTML as the CLI — about a
-          megabyte, no external references, opens off disk. Commit it beside the code it
-          describes, or send it to somebody who has never heard of any of this.
-        </p>
-      </div>
-    </div>
-  </section>
-</div>
-
-<div class="sheet" id="start">
-  <section class="band">
-    <span class="eyebrow">Getting started</span>
-    <h2>One binary, one file, no build step.</h2>
-
-    <div class="start">
-      <pre><span class="c"># install the compiler</span>
-cargo install --git https://github.com/ethereumdegen/gridwillow gridwillow-cli
-
-<span class="c"># check it — every problem at once, with line numbers</span>
-bp check infra.bp
-
-<span class="c"># one self-contained HTML file, ~1 MB, opens off disk</span>
-bp export infra.bp
-
-<span class="c"># or edit it live: the app redraws on every save</span>
-open -a Gridwillow infra.bp</pre>
-
-      <div class="steps">
-        <div class="step">
-          <div class="num">1</div>
-          <div>
-            <h3>Describe the system</h3>
-            <p>By hand, or install the skills and ask your agent to map the repo. Either way you end up with one text file.</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="num">2</div>
-          <div>
-            <h3>Check it</h3>
-            <p>Errors point at a line and a column. Warnings flag the things that make a blueprint worse to read — a vague payload, a block nothing connects to, forty-one blocks in one picture.</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="num">3</div>
-          <div>
-            <h3>Export or open it</h3>
-            <p>The HTML has no external references at all — no server, no CDN, no network. Commit it next to the code it describes, or email it to someone.</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="num">4</div>
-          <div>
-            <h3>Keep it honest</h3>
-            <p>Rendering is deterministic: same file, same drawing. Change one block, rebuild, and diff exactly what moved.</p>
-          </div>
-        </div>
       </div>
     </div>
   </section>
