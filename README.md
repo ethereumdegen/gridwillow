@@ -1,12 +1,16 @@
 <h1>Gridwillow</h1>
 
-**A 3D diagram language for software architecture.** Mermaid, with depth.
+**A 3D diagram language/DSL for software architecture.** 
 
 [gridwillow.com](https://gridwillow.com)
 
 Write a `.bp` file describing your servers, databases, queues and the data that
 moves between them. Get back an animated isometric engineering drawing you can
 pan, hover and click through — with a full inspector panel behind every block.
+
+
+
+<img width="1061" height="617" alt="image" src="https://github.com/user-attachments/assets/51101c00-1497-4c7a-869a-1007cb5af4c7" />
 
 ![the drawing](docs/preview.png)
 
