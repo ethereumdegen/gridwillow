@@ -1,34 +1,59 @@
-<h1>Gridwillow</h1>
+# Gridwillow
 
-**A 3D diagram language for software architecture.** Mermaid, with depth.
+**A 3D diagram language for software architecture.**
 
-[gridwillow.com](https://gridwillow.com)
+[![licence](https://img.shields.io/badge/licence-MIT-black)](LICENSE)
+[![language](https://img.shields.io/badge/compiler-Rust-black)](crates/gridwillow)
+[![site](https://img.shields.io/badge/gridwillow.com-live-4a9d5f)](https://gridwillow.com)
 
-Write a `.bp` file describing your servers, databases, queues and the data that
-moves between them. Get back an animated isometric engineering drawing you can
-pan, hover and click through — with a full inspector panel behind every block.
+Write a plain text file describing your services, databases, queues and the data
+that moves between them. Get back an isometric engineering drawing you can pan,
+hover and click through — with a full inspector behind every block.
 
-![the drawing](docs/preview.png)
+![A Gridwillow blueprint of a payments platform, with the ledger selected and its inspector open](docs/preview.png)
 
 ```
-db orders "Orders" x1.4
-  is    the ledger — every authorisation, capture and refund
+db orders "Orders" x1.5
+  is    the ledger — every authorisation, capture and refund ever taken
   why >
-    Postgres, single writer, replicas for reads. It is the only store in
-    the system allowed to be the source of truth.
+    Postgres with a single writer and two read replicas. It is the only
+    store in the system permitted to be a source of truth; everything else
+    is a cache, an index, or a copy that may be thrown away.
   fact  Engine  = Postgres 16
-  list  Tables  = orders, order_items, captures, refunds
+  fact  Backups = PITR, 7 days
+  list  Tables  = orders, order_items, captures, refunds, idempotency_keys
   link  Runbook = https://wiki/runbooks/orders-db
   env   DATABASE_URL PGBOUNCER_HOST
 
 checkout -write-> orders "the authorisation"
   carry INSERT INTO orders (id, cart_id, state, amount_cents)
-  why   Written before the processor is called, never after. If the process
-        dies between the two, reconciliation finds the orphan by state.
+  why >
+    Written before the processor is called, never after. If the process dies
+    between the two, the reconciler finds the orphan by its state.
   vol   0.8
 ```
 
----
+## Why not just use Mermaid
+
+Mermaid draws the graph you typed. Gridwillow makes you say enough about the
+system that the drawing is worth keeping:
+
+- **Shape carries meaning.** Eight block shapes, closed set — a laminated slab
+  is a store, a ribbed stack is a queue, a ghost box is something you don't own.
+  Two blueprints of two unrelated systems can be read side by side.
+- **Every line has to be real.** A connection must name a concrete function,
+  type, table or route in `carry`. If you can't name what crosses it, the
+  compiler tells you the line isn't real. This is the rule that stops
+  architecture diagrams becoming boxes joined by vibes.
+- **Detail lives in the file.** `fact`, `list`, `link` and `env` fill an
+  inspector that opens on click — table names, indexes, env vars, runbooks —
+  so the diagram answers questions instead of just decorating a wiki.
+- **It compiles.** Dangling references, undeclared blocks and missing prose are
+  errors with a line and a column. Vague payloads and unwired blocks are
+  warnings. A blueprint that renders is a blueprint someone checked.
+
+The cost is that it is more work to write than a Mermaid graph. That is on
+purpose, and it's why the [agent skills](#let-an-agent-write-it) exist.
 
 ## Use it
 
@@ -46,11 +71,11 @@ Or open it in the app, which redraws every time you save:
 cd app && cargo tauri dev
 ```
 
-Try the repo describing itself, or a real 39-block system:
+Three examples ship with it:
 
 ```bash
-bp export examples/payments.bp           # a payments platform, 16 blocks
-bp export examples/metalcraft-agent.bp   # a real Rust service, 39 blocks
+bp export examples/payments.bp           # a payments platform — 16 blocks
+bp export examples/metalcraft-agent.bp   # a real Rust service — 39 blocks
 bp export examples/self.bp               # this repo, describing itself
 ```
 
@@ -184,9 +209,22 @@ step.
 cd site && npm start        # http://localhost:3000
 ```
 
-Deploy it by pointing a Railway service at this repo with **Root Directory** set
-to `site`. Nixpacks finds `site/package.json`, runs `node server.js`, and never
-touches the Rust half; redeploys only trigger on changes under that path.
+### Deploying it
+
+New Railway service from this repo, then in **Settings → Source** set
+**Root Directory** to `site`. That is the whole configuration — the builder finds
+`site/package.json`, sees the `start` script, and runs it. There is deliberately
+no `railway.json`: Railway resolves config files from the *repository* root
+rather than the service root, so one sitting in `site/` would be silently
+ignored and one at the top would need an absolute path for no benefit.
+
+Set **Watch Paths** to `site/**` if you don't want a Rust commit redeploying the
+page.
+
+For the domain: Railway issues a CNAME and a TXT record, both required. An apex
+like `gridwillow.com` needs a provider that flattens CNAMEs at the root —
+Cloudflare, DNSimple, Namecheap and bunny.net all do; a plain A record will not
+work.
 
 `site/payments.blueprint.html` is the one build artifact in version control —
 Railway builds `site/` alone and has no Rust toolchain to regenerate it. After
