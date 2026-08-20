@@ -1,0 +1,1277 @@
+# Gridwillow
+
+> A text language for software architecture. You write one `.bp` file naming a
+> system's services, stores, queues and the data that moves between them; the
+> Rust compiler renders it as an interactive isometric blueprint — one
+> self-contained HTML file, with a hover card on every block and an inspector
+> behind each one. Think Mermaid, for infrastructure, in three dimensions.
+
+Gridwillow is built to be written by a coding agent pointed at a repository. Two
+rules carry the design: every construct is one line beginning with a keyword,
+and indentation is decorative — so a mis-indented generated file still parses
+exactly the same. Every connection must name something concrete that crosses it
+(a table, a route, a function, a type) or the checker rejects it. That rule is
+what stops a generated architecture diagram from becoming boxes joined by vibes.
+
+If you are going to read one file, read /llms-full.txt: it is every document
+below, concatenated, and it is enough to write a blueprint that compiles.
+
+## Start here
+
+- [The .bp language](https://gridwillow.com/docs/language.md): The complete language reference — the two rules, the whole syntax on one screen, the eight-shape table, the six connection kinds, every attribute by scope, prose blocks and inline markup, and what the checker treats as an error versus a warning. Read this one first.
+- [Writing a blueprint](https://gridwillow.com/docs/writing-a-blueprint.md): The procedure to follow against a real codebase: survey before writing anything, choose 15–40 subsystem blocks, trace only the connections you can name, then let `bp check` grade the result.
+- [Writing the prose](https://gridwillow.com/docs/prose.md): How to write `is`, `why` and `carry` so the hover cards are worth opening. The default register of generated documentation is the wrong one here, and this page is about correcting it.
+- [Keeping a blueprint true](https://gridwillow.com/docs/keeping-it-true.md): The procedure for re-checking an existing blueprint against the code it claims to describe — moved paths, deleted functions, new tables — and rewriting only what actually drifted.
+
+## Grammar and examples
+
+- [/docs/grammar.ebnf](https://gridwillow.com/docs/grammar.ebnf): The formal grammar, in EBNF. The normative answer when the prose reference and your parser disagree.
+- [/docs/blueprint-ir.schema.json](https://gridwillow.com/docs/blueprint-ir.schema.json): JSON Schema for the compiled intermediate form the renderer consumes. You never write this by hand; `bp build` emits it.
+- [/examples/payments.bp](https://gridwillow.com/examples/payments.bp): A complete, checked blueprint of a payments platform — 16 blocks, 19 connections, groups, tabs and terms. The worked example, and the file rendered on the front page.
+- [/examples/self.bp](https://gridwillow.com/examples/self.bp): Gridwillow’s own architecture as a blueprint — the compiler, the renderer and the app, drawn in their own language.
+
+## Using it
+
+```
+cargo install --path crates/gridwillow-cli   # the `bp` binary, from a clone
+
+bp check  infra.bp                # every problem at once, with line and column
+bp build  infra.bp -o infra.json  # the compiled IR
+bp fmt    infra.bp --write        # canonical formatting, in place
+bp export infra.bp -o infra.html  # one self-contained HTML file
+```
+
+`--force` builds or exports anyway when there are errors. The desktop app
+(`cd app && cargo tauri dev`) redraws on every save.
+
+The compiler is the grader. `bp check` splits its findings in two: errors block
+a build (a connection to a block that does not exist, a dangling `[[…|id]]`, a
+duplicate id, a value out of range), and warnings never do but each names a way
+the drawing is worse to read (fewer than 15 or more than 40 blocks, a block
+nothing connects to, a vague `carry` like "data", a one-sentence `why`).
+Write, run `bp check`, fix what it reports, repeat.
+
+## Optional
+
+- [Source, issues and releases](https://github.com/ethereumdegen/gridwillow): the repository. MIT licensed; the compiler is Rust, the renderer is three.js, and there are no runtime dependencies.
+- [Agent skills](https://github.com/ethereumdegen/gridwillow/tree/main/skills): `SKILL.md` files in the format Claude Code and OMP both discover. `./skills/install.sh claude` symlinks them into `~/.claude/skills/`; the same two documents are served here as /docs/writing-a-blueprint.md and /docs/keeping-it-true.md.
+- [A rendered blueprint](https://gridwillow.com/payments.blueprint.html): the compiled output of examples/payments.bp. About a megabyte of generated three.js scene — worth opening in a browser, not worth fetching as text.
+
+==============================================================================
+
+# About this file
+
+Everything linked above, concatenated, in reading order: the language reference,
+the procedure for writing a blueprint from a codebase, the prose guide, the
+procedure for keeping one true, the formal grammar, and a complete worked
+example. Sections are separated by a line of "=".
+
+Two of these documents ship as agent skills in the repository, so they cite
+sibling files by relative path — `reference/language.md` is the language
+reference and `reference/voice.md` is the prose guide. Both are already in
+this file; there is nothing further to fetch.
+
+==============================================================================
+
+# The .bp language
+
+(source: https://gridwillow.com/docs/language.md)
+
+A `.bp` file describes a software system — its servers, databases, queues and
+the data that moves between them — and a fixed renderer draws it as an animated
+isometric engineering plan you can hover and click through.
+
+Think Mermaid, for infrastructure, in three dimensions.
+
+`spec/blueprint.ebnf` is the formal grammar. `spec/blueprint-ir.schema.json` is
+the compiled form the renderer consumes. This file is the one to read.
+
+---
+
+## Two rules carry the whole design
+
+**Line-oriented.** Every construct is one line beginning with a keyword.
+Indentation is decorative and means nothing. A file that is mis-indented — the
+most common way a generated file goes wrong — still parses exactly the same.
+
+**Context-scoped.** A declaration opens a scope; the attribute lines after it
+attach to that scope until the next declaration. Attribute keywords are checked
+against the open scope, so a misplaced line is a precise error instead of data
+that silently vanishes.
+
+The one exception to the first rule is the block scalar, `>` and `|`, where
+indentation delimits the block. Prose has to span lines somehow, and this
+follows YAML's convention so it reads the way you expect.
+
+## The whole language, on one screen
+
+```
+# comments are whole-line only
+
+blueprint payments-platform
+  title    The Payment Path
+  tagline  what happens between a card tap and a settled ledger row
+  branch   main
+  stamp    v4.2.0
+
+stat Services = 11 · 3 languages
+stat Peak     = 4,200 req/s
+
+group edge "The edge"
+  note everything before the request is ours
+
+lb ingress "Load balancer" x1.2
+  is    terminates TLS and picks a healthy checkout instance
+  why >
+    Two of them, one per zone, sharing a floating address. Health checks
+    are shallow on purpose — a deep check took the whole pool down in
+    March when the ledger was slow.
+  src   infra/nginx/
+  uses  nginx
+  num   Zones = 2
+
+group core "Core"
+
+svc checkout "Checkout" x1.5
+  is   turns a cart into an authorised payment
+  why  Owns the state machine. Every transition is written before the
+       call that causes it, so a crash mid-flight is recoverable.
+  src  services/checkout/
+
+db orders "Orders" x1.4
+  is    the ledger — every authorisation, capture and refund
+  why >
+    Postgres, single writer, replicas for reads. It is the only store
+    in the system that is allowed to be the source of truth.
+  fact  Engine  = Postgres 16
+  fact  Region  = us-east-1
+  fact  Backups = PITR, 7 days
+  list  Tables  = orders, order_items, captures, refunds
+  list  Indexes = orders_customer_idx, orders_created_at_idx
+  link  Runbook = https://wiki/runbooks/orders-db
+  env   DATABASE_URL PGBOUNCER_HOST
+
+topic settlements "Settlements" !planned
+  is   the queue the ledger writes to and settlement reads from
+  why  Not built yet. Settlement polls the table directly today, which is
+       the reason the nightly job takes nineteen minutes.
+
+# ------------------------------------------------------------------
+# connections
+# ------------------------------------------------------------------
+
+ingress -call-> checkout "a tap"
+  carry POST /v1/checkout {cart_id, payment_method}
+  why   The only inbound path. A 5xx here is the one alert that pages.
+  vol   0.9
+
+checkout -write-> orders "the authorisation"
+  carry INSERT INTO orders (id, cart_id, state, amount_cents)
+  why >
+    Written before the processor is called, never after. If the process
+    dies between the two, a reconciliation job finds the orphan by state.
+  vol   0.8
+
+# ------------------------------------------------------------------
+# narrative
+# ------------------------------------------------------------------
+
+tab what "What it does"
+  h  The Payment Path
+  p >
+    A card tap arrives at [[the load balancer|ingress]] and leaves as a row
+    in [[the ledger|orders]]. Everything between is one {{state machine}}.
+  note Hover a block for what it is. Click one for everything about it.
+  code |
+    curl -XPOST https://api/v1/checkout -d @cart.json
+
+term "state machine" = a set of named states and the legal moves between them
+```
+
+## The shape table
+
+`kind` decides the geometry. There are eight shapes and that is the whole
+visual vocabulary — learn them once and every blueprint anyone writes is
+readable. What varies is the *word* you use: many domain words alias onto each
+shape, so you can call a thing what it actually is.
+
+| shape | drawn as | reads as | write it as |
+|---|---|---|---|
+| entrypoint | tall narrow prism | a way in | `entry` `lb` `ingress` `gateway` `cli` `endpoint` |
+| service | cube, vertical hatch | a thing that does work | `svc` `server` `api` `app` `worker` `lambda` `module` |
+| store | wide laminated slab | a place data rests | `store` `db` `postgres` `mysql` `sqlite` `cache` `redis` `bucket` `s3` `blob` `volume` `index` `table` |
+| queue | ribbed stack of plates | a place work waits | `queue` `topic` `stream` `channel` `buffer` `bus` `kafka` `pubsub` `mailbox` |
+| model | cube with a dot | a call to a model | `model` `llm` `inference` `agent` |
+| library | low flat plate | shared code or contract | `lib` `pkg` `crate` `schema` `config` `contract` |
+| external | ghost box, no fill | not yours | `ext` `saas` `vendor` `client` `browser` `mobile` `user` `cdn` |
+| job | small cube on a stem | runs on its own clock | `job` `cron` `timer` `scheduler` `batch` `task` |
+
+Pick the shape a reader recognises, not the one that is most technically
+precise. Redis used only as a job queue is a `topic`, not a `cache`.
+
+**Modifiers**, in any order after the label:
+
+- `x1.4` — visual weight, 0.5 to 2.0. Raise it for the two or three blocks
+  that dominate. If everything is heavy, nothing is.
+- `@4,-2` — manual grid position. Reach for it after you have seen the render,
+  never while writing.
+- `!dormant` — faded, for code that exists but is not switched on.
+  `!planned` — a ghost outline, for what is coming. Default is active.
+
+## The line table
+
+| kind | drawn as | use it for |
+|---|---|---|
+| `-data->` | solid hairline | a value moves from one place to another |
+| `-call->` | solid with arrowhead | A invokes B and waits |
+| `-event->` | dashed | fire-and-forget, pub/sub, webhooks |
+| `-read->` | fine dotted | A reads state B owns |
+| `-write->` | double solid, arrowhead | A mutates state B owns |
+| `-spawn->` | sparse dotted | A creates or launches B |
+
+Write `<-call->` for bidirectional; it changes the hover card's arrow, not the
+line. `vol` (0 to 1) sets packet density and speed — the only way the drawing
+shows where the hot path is, so spend it. A connection's id is derived as
+`from__to`; override it with `as` only when you need to.
+
+## Attributes by scope
+
+| scope | keywords |
+|---|---|
+| `blueprint` | `title` `tagline` `branch` `stamp` |
+| top level | `stat <label> = <value>` |
+| `group` | `note` |
+| node | `is` `why` `src` `uses` `num` `fact` `list` `link` `env` |
+| connection | `carry` `why` `vol` `as` `via` |
+| `tab` | `h` `p` `note` `code` `---` |
+
+**`is`** is one clause, under 90 characters — what it is, not what it is for.
+**`why`** is 2–4 sentences: what it does, roughly how, and one thing a reader
+would not have guessed. That last sentence is what makes a hover card worth
+opening.
+
+**`carry`** is the hard one. Every connection must name something concrete —
+a type signature, a function, an SQL table, an HTTP route, a topic. If you
+cannot name what crosses the line, the line is not real; delete it. This rule
+exists because the failure mode of generated architecture diagrams is boxes
+joined by vibes.
+
+## The inspector
+
+Hovering shows a quick card. **Clicking pins a full inspector** in the right
+panel, and that is where `fact`, `list`, `link` and `env` land — alongside the
+source paths, the tech chips, and every connection in and out, each one
+clickable to walk the graph.
+
+```
+db orders "Orders"
+  fact Engine  = Postgres 16          →  a labelled row
+  list Tables  = orders, refunds      →  chips
+  link Runbook = https://…            →  a clickable row
+  env  DATABASE_URL PGBOUNCER_HOST    →  chips
+  num  Rows    = 4.2M                 →  a headline number on the hover card
+```
+
+`num` and `fact` share a syntax and differ in destination: `num` is one of the
+up-to-four headline numbers on the hover card, `fact` is an inspector row.
+All of them repeat.
+
+## Prose values
+
+An attribute value runs to the end of its line. For anything longer, end the
+line with a block marker:
+
+- `>` **folded** — following lines are joined with spaces; a blank line becomes
+  a paragraph break. Use this for all prose.
+- `|` **literal** — newlines preserved. Use this for `code`.
+
+A block ends at the first line indented no further than the line that opened
+it, or at end of file.
+
+Two inline markups work inside any prose, and nothing else does:
+
+- `[[display text|node_id]]` — a highlighted phrase wired to a block. Hover
+  either and the other lights up; click to fly there and open the inspector.
+  Six to twelve across a narrative is about right.
+- `{{term}}` — dotted underline, definition on hover. Must have a matching
+  `term "…" = …` declaration.
+
+Markdown does not work. HTML is escaped.
+
+## Errors and warnings
+
+`bp check` splits its findings in two, and the split is the point.
+
+**Errors** block a build: an unknown enum value, a connection to a block that
+does not exist, a duplicate id, a `[[…|id]]` pointing at nothing, a missing
+required field, a length out of range. Every one carries a line, a column, and
+the offending source line with a caret under it.
+
+**Warnings** never block, and each is a thing that makes a blueprint worse to
+read: fewer than 15 or more than 40 blocks, a block nothing connects to, a
+vague `carry` like "data", a one-sentence `why`, marketing language in the
+tagline, two connections running the same direction between the same pair,
+fewer than three narrative links.
+
+`--force` builds anyway. The app is more forgiving still: a file that stops
+parsing keeps the last good drawing on screen with the errors over it, because
+blanking the window on every half-typed line makes a live-reload loop useless.
+
+## What you do not control
+
+Positions, colours, fonts, hatching, line routing, camera angle, animation,
+panel layout, label placement. All fixed, identical for every blueprint, and
+fully deterministic — no `Math.random`, no clock-seeded values. The same file
+always produces the same drawing, so you can change one block, save, and see
+exactly what moved.
+
+## Layout, if you are curious
+
+1. Blocks are ranked by longest path through the whole graph. Cycles are handled
+   by bounding the relaxation passes rather than detecting them.
+2. Inside a group, the *distinct* ranks its members occupy are renumbered
+   `0,1,2…`, so a group's plot is compact regardless of where it sits globally.
+3. Same-rank blocks stack front-to-back, centred in the plot.
+4. Group plots are packed in projected coordinates (`u = col − row`,
+   `v = col + row`) rather than on the floor grid. Packing on the floor leaves
+   voids that grow with each plot's depth, and turns the drawing into a thin
+   diagonal streak with two empty corners.
+5. `@col,row` overrides all of it.
+
+==============================================================================
+
+# Writing a blueprint
+
+(source: https://gridwillow.com/docs/writing-a-blueprint.md)
+
+Turn a system into a `.bp` file. The compiler renders it as an isometric
+engineering drawing: extruded blocks on a hairline grid, wired by orthogonal
+connectors with travelling packets, with a hover card on everything and an
+inspector behind every block.
+
+You write **one text file and nothing else**. The renderer is fixed. That
+constraint is what makes two blueprints of two unrelated systems readable side
+by side.
+
+Read `reference/language.md` before writing a line — it is the whole grammar and
+the shape table. Read `reference/voice.md` before writing prose; the prose is
+most of the value and the default register is wrong for it.
+
+## The procedure
+
+Work the phases in order. The single most reliable way to produce a drawing full
+of plausible, wrong connections is to start writing before you have looked.
+
+### 1. Survey — write nothing
+
+- The manifest: `Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`. Real
+  dependencies tell you what the system is more honestly than the README does.
+- Every entrypoint: `main.*`, `bin/*`, `cmd/*`, server bootstraps, CLI
+  definitions, exported handlers, worker registrations, cron entries.
+- The tree, two levels deep (`glob`). Note which directories are large and which
+  are one file pretending to be a package.
+- Migrations or schema, if present. Tables are the most honest map of a system's
+  nouns you will find.
+- Deployment: compose files, Terraform, k8s manifests, `railway.json`,
+  `Dockerfile`. This is where the infrastructure blocks come from.
+
+By the end you can say in one sentence what the system does when it runs. If you
+cannot, keep reading.
+
+### 2. Blocks — 15 to 40 of them
+
+A block is a **subsystem**: something a maintainer would name out loud in a
+design conversation. Almost never one file; almost never a whole top-level
+directory either.
+
+Under 15 blocks the drawing is trivial. Over 40 it is soup. Collapse leaf modules
+into their parent and mention them in the parent's `why` — "also holds the retry
+policy and the backoff table" is worth more than two extra blocks.
+
+Choose the kind word a reader recognises, not the most technically precise one.
+Redis used only as a job queue is a `topic`, not a `cache`.
+
+Group into 2–6 groups, ordered so reading the sidebar top to bottom walks the
+system in the order it actually runs.
+
+### 3. Connections — only real ones
+
+Work outward from the entrypoints. `lsp` is the right tool here: definitions,
+references and implementations give you the call graph directly, where `grep`
+gives you guesses.
+
+**The hard rule.** Every connection names something concrete in `carry` — a type
+signature, a function, an SQL table, an HTTP route, a topic, a channel type. If
+you cannot name what crosses the line, the line is not real. Delete it.
+
+This exists because the failure mode of generated architecture diagrams is boxes
+joined by vibes. Twenty true connections beat sixty where half are "relates to".
+
+Spend `vol`. It drives packet density, which is the only way the drawing shows
+where the hot path is. Do not set everything to 0.5.
+
+### 4. Inspector detail — be generous
+
+`fact`, `list`, `link` and `env` fill the panel that opens on click. This is
+where a blueprint stops being a picture and becomes a reference:
+
+- `fact Engine = Postgres 16` — versions, regions, replica counts, retention,
+  ports, owners, timeouts.
+- `list Tables = orders, refunds` — table names, indexes, topics, routes, flags.
+- `link Runbook = https://…` — runbooks, dashboards, design docs.
+- `env DATABASE_URL` — what it needs to run.
+
+A database block carrying its real table names is worth more to somebody new
+than three paragraphs of prose.
+
+### 5. Narrative
+
+Two tabs: what it does, how it's built. Audience is a competent engineer who has
+never seen this system and has four minutes. See `reference/voice.md`.
+
+Use 6–12 `[[phrase|block_id]]` links across the panel. They are what makes the
+prose and the drawing feel like one object rather than two things on a screen.
+
+### 6. Check, then hand over
+
+```sh
+bp check <name>.bp
+```
+
+Fix every error. Read the warnings and fix the ones that are right — they are
+about readability, and most of them are right.
+
+Two things `bp check` cannot see, so verify them yourself:
+
+- Every path in `src` **exists**. Check with `glob`; do not assume.
+- Every `carry` is **true of the code**, not merely plausible.
+
+Then tell the human, in three or four sentences, what surprised you about the
+system. That is often worth more than the drawing.
+
+## Rules that are not negotiable
+
+- Never edit the renderer, the compiler, or the exported HTML. One file.
+- Never invent a kind word or a connection kind. Both sets are closed;
+  `reference/language.md` has them.
+- Never use markdown or HTML in prose. Two inline markups exist and no others.
+- Never guess a file path or a table name. Look it up.
+- `@col,row` and `via` are last resorts, used after seeing a render, not while
+  writing.
+
+## Handing it back
+
+```sh
+bp export <name>.bp        # one self-contained HTML file
+```
+
+Or the human opens the `.bp` in the Gridwillow app, which redraws on every save.
+If they are iterating, point them at the app rather than re-exporting for them.
+
+==============================================================================
+
+# Writing the prose
+
+(source: https://gridwillow.com/docs/prose.md)
+
+The prose is most of the value. A blueprint whose blocks are labelled correctly
+and whose hover cards say nothing is a worse artifact than a whiteboard photo,
+because it looks authoritative.
+
+The default register for generated documentation is wrong for this. Correct it
+deliberately.
+
+## Who you are writing for
+
+A competent engineer who has never seen this system and has about four minutes.
+They can read code. They cannot yet tell which parts matter, which decisions
+were forced, and which things will bite them.
+
+Write the way you would explain it to a colleague at a whiteboard, out loud.
+
+## The one test that matters
+
+**Every `why` ends with something the reader would not have guessed from the
+name.** That last sentence is the entire reason to open a hover card.
+
+Not guessable:
+
+> Health checks are shallow on purpose: a deep check that touched the ledger
+> took the whole pool down in March when a slow query made every instance look
+> sick.
+
+Guessable, therefore worthless:
+
+> The load balancer distributes traffic across healthy instances for high
+> availability and reliability.
+
+If you cannot find the non-obvious sentence, you have not read enough of the
+code yet. Go back rather than padding.
+
+## Register
+
+Short declaratives. Concrete nouns. Say the surprising thing plainly instead of
+building up to it. Contractions are fine. Semicolons are fine.
+
+Match this:
+
+> The diagram is a loop because the system is: one archive → pick a parent →
+> write a new doctrine → play it → rate it → file it → back to the archive.
+> Everything below the loop is the game itself: the Rust engine sits beside it,
+> finished and not switched on.
+
+## Never write
+
+- Marketing adjectives: powerful, seamless, robust, scalable, cutting-edge,
+  state-of-the-art, best-in-class, enterprise-grade. The checker warns on some
+  of these in the tagline; it cannot catch them everywhere.
+- "Responsible for", "handles", "manages", "facilitates", "leverages",
+  "utilises". Say what it does.
+- Bullet lists of features inside a `why`.
+- A restatement of the block's own label. `is` on a block called Load Balancer
+  should not begin "load balances".
+- Hedging you do not mean. "May potentially" is two hedges for no reason.
+- Anything you would not say out loud to a colleague.
+
+## Field by field
+
+**`title`** — what the system *is*, not what the repo is called.
+`metalcraft-agent` → "The Pod". `payments-platform` → "The Payment Path".
+
+**`tagline`** — one lowercase sentence, no full stop needed. What it does.
+`one rust binary that runs an agent as a scoped persona, on a box you own`
+
+**`stat`** — facts a reader could not guess, and that reveal *shape* rather than
+size. "582 distinct doctrines" is a stat. "47 source files" is not.
+
+**`is`** — one clause, what it *is*, not what it is for. "the ledger — every
+authorisation, capture and refund ever taken", not "handles order persistence".
+
+**`why`** — 2–4 sentences. What it does, roughly how, then the non-obvious
+thing. Do not open with "This module".
+
+**connection `carry`** — the concrete thing, written for a human to read:
+`INSERT INTO orders (id, cart_id, state, amount_cents)`, `POST /v1/checkout
+{cart_id, payment_method}`, `AppContext { SqliteStore, BlobStore, OwnerIdentity }`.
+
+**connection `why`** — when it fires, what it carries, and what failure looks
+like. The failure sentence is the one people remember.
+
+> Written before the processor is called, never after. If the process dies
+> between the two, the reconciler finds the orphan by its state.
+
+## The narrative panel
+
+Two tabs. The first says what the system does and why it is shaped this way.
+The second says how it is built and what was traded away.
+
+Structure that works:
+
+1. `h` — the title again, then a paragraph that gets a stranger oriented in
+   three sentences.
+2. The organising idea. Every system has one; find it and name it.
+3. `note` — a short aside telling the reader how to use the drawing.
+4. The rule or invariant the whole thing rests on, and what breaks without it.
+5. In the second tab: the dependencies you did not write, the extension seam,
+   the determinism or consistency story, and **what is deliberately missing**.
+
+That last section is the most valuable and the most often skipped. Write down
+the gaps — no service mesh, no fallback provider, no cross-region reads — with
+one clause on why each was cheaper to live with than to run. It stops the next
+person having to work out whether it was an oversight.
+
+Close with a paragraph on where the file lives, so a reader who spots something
+wrong knows what to edit.
+
+## Links
+
+Use 6–12 `[[phrase|block_id]]` links across the panel. Link the phrase that
+names the thing, not a bare noun:
+
+- Good: `[[a named, scoped tool set|persona_store]]`
+- Good: `[[the load balancer|ingress]]`
+- Weak: `[[it|ingress]]`
+
+Do not link the same block five times. Do not link every block — a panel where
+everything is highlighted has highlighted nothing.
+
+## Glossary
+
+Use `{{term}}` for words a competent engineer outside this domain would not
+know, and define them in one sentence without jargon. Two or three per blueprint
+is plenty. Do not define words the reader obviously knows.
+
+==============================================================================
+
+# Keeping a blueprint true
+
+(source: https://gridwillow.com/docs/keeping-it-true.md)
+
+A blueprint that is quietly wrong is worse than no blueprint, because it looks
+authoritative. This skill checks an existing `.bp` against the code it claims to
+describe and repairs the drift.
+
+Use `gridwillow-blueprint` to write one from scratch; use this one when the file
+already exists.
+
+## Start with the machine checks
+
+```sh
+bp check <name>.bp
+```
+
+Everything it reports is real. Fix the errors first — a file that does not
+compile cannot be reasoned about. Then read the warnings; most are right.
+
+`bp check` cannot see whether the file is *true*, which is what the rest of this
+is for.
+
+## Then verify the claims, cheapest first
+
+**Paths.** Every `src` entry must still exist. This is the fastest and most
+common drift — a rename moves a module and no one updates the drawing.
+
+```sh
+grep -oE '^\s*src .*' <name>.bp | tr -s ' ' '\n' | grep -v '^src$' | sort -u
+```
+
+Check each with `glob`. A path that has moved usually means the block's `why` is
+stale too — look before you just repoint it.
+
+**Payloads.** Every `carry` names something concrete: a function, a type, a
+table, a route. Confirm each still exists and still means what the line says.
+`lsp` for symbols, `grep` for routes and SQL. A `carry` naming a function that
+was deleted is the single most misleading thing a blueprint can contain.
+
+**Facts.** Versions, replica counts, timeouts, schedules, retention windows.
+These rot silently. Check them against the manifest, the deployment config, and
+the migrations — not against the last blueprint.
+
+**Table and index lists.** Compare `list Tables` against the migrations
+directory. New tables are the clearest signal that a subsystem grew and its
+`why` no longer covers what it does.
+
+**Environment variables.** Compare `env` against `.env.example`, the compose
+file, and the deployment config.
+
+## Then look for what is missing
+
+Drift is rarely only decay; usually something was added.
+
+- New entrypoints, new binaries, new top-level directories since the blueprint's
+  `stamp`. `git log --diff-filter=A --name-only` since that point is a fast way
+  to see what appeared.
+- New services in the compose or deployment files.
+- A directory that has grown enough to deserve its own block — or two blocks
+  that have collapsed into one thing and should be merged.
+- Blocks marked `!planned` that have since shipped, and blocks that are now
+  `!dormant`.
+
+Adding a block means checking every connection that should now terminate on it.
+This is the step people skip, and it is why refreshed blueprints tend to grow
+islands.
+
+## Repair, and keep the prose
+
+The prose is the expensive part. Do not rewrite a `why` that is still true just
+because you are editing the block. Change the sentence that is wrong and leave
+the rest.
+
+When a subsystem has genuinely changed shape, rewrite the whole `why` properly —
+including the closing non-obvious sentence. A half-updated paragraph reads worse
+than either version. See `../gridwillow-blueprint/reference/voice.md`.
+
+Update `stamp` to the version or date you verified against. That is what the
+next refresh will diff from.
+
+## Check the block count has not drifted either
+
+15–40 is the readable band. A blueprint that has grown to 50 needs leaf blocks
+folded into their parents, not a bigger screen. One that has shrunk to 12 has
+usually lost detail rather than complexity.
+
+## Finish
+
+```sh
+bp check <name>.bp
+bp export <name>.bp
+```
+
+Then tell the human what actually changed, in a short list — not what you
+verified, what moved. "The settlement worker now writes to S3 before the
+acquirer, and three tables were added to the ledger" is the useful report.
+Mention anything you found in the code that looked wrong rather than merely
+undocumented; a blueprint refresh is one of the few times somebody reads a whole
+system on purpose.
+
+==============================================================================
+
+# The formal grammar (EBNF)
+
+(source: https://gridwillow.com/docs/grammar.ebnf)
+
+(* ==========================================================================
+   blueprint DSL — grammar, v1
+   file extension: .bp
+   ---------------------------------------------------------------------------
+   Two rules carry the whole design:
+
+     1. LINE-ORIENTED.  Every construct is one line beginning with a keyword.
+        Indentation is decorative and carries NO meaning — an author (or a
+        language model) that mis-indents still produces a valid file.
+
+     2. CONTEXT-SCOPED.  A declaration line opens a scope; the attribute lines
+        that follow attach to it until the next declaration. Attribute keywords
+        are validated against the open scope, so a misplaced attribute is a
+        precise error rather than silently-dropped data.
+
+   The single exception to rule 1 is the block scalar (`>` and `|`), where
+   indentation delimits the block. That is the one construct where prose needs
+   to span lines, and it follows YAML's convention so it reads as expected.
+   ========================================================================== *)
+
+file            = { line } ;
+line            = comment | blank | declaration | attribute ;
+
+comment         = ws , "#" , { any - newline } , newline ;   (* whole-line only *)
+blank           = ws , newline ;
+
+(* -- declarations: each opens a scope ------------------------------------- *)
+
+declaration     = blueprint_decl
+                | stat_decl
+                | group_decl
+                | node_decl
+                | edge_decl
+                | tab_decl
+                | term_decl ;
+
+blueprint_decl  = ws , "blueprint" , sp , slug , newline ;
+
+stat_decl       = ws , "stat" , sp , label_text , "=" , value_text , newline ;
+
+group_decl      = ws , "group" , sp , slug , sp , quoted , newline ;
+
+node_decl       = ws , node_kind , sp , slug , sp , quoted ,
+                  { sp , node_modifier } , newline ;
+
+node_kind       = "entry" | "svc" | "store" | "queue"
+                | "model" | "lib"  | "ext"   | "job"
+                (* long forms accepted and normalised *)
+                | "entrypoint" | "service" | "library" | "external" ;
+
+node_modifier   = weight | position | status ;
+weight          = "x" , number ;                    (* x1.4  — 0.5 .. 2.0     *)
+position        = "@" , integer , "," , integer ;   (* @4,-2 — manual layout  *)
+status          = "!" , ( "dormant" | "planned" ) ; (* omitted = active       *)
+
+edge_decl       = ws , slug , sp , arrow , sp , slug ,
+                  [ sp , quoted ] , newline ;
+
+arrow           = [ "<" ] , "-" , edge_kind , "->" ;
+edge_kind       = "data" | "call" | "event" | "read" | "write" | "spawn" ;
+
+tab_decl        = ws , "tab" , sp , slug , sp , quoted , newline ;
+
+term_decl       = ws , "term" , sp , quoted , "=" , value_text , newline
+                | ws , "term" , sp , quoted , sp , block_intro , newline , block ;
+
+(* -- attributes: valid only inside a matching scope ----------------------- *)
+
+attribute       = bp_attr | group_attr | node_attr | edge_attr | tab_attr ;
+
+bp_attr         = ws , ( "title" | "tagline" | "branch" | "stamp" ) ,
+                  sp , text_value , newline ;
+
+group_attr      = ws , "note" , sp , text_value , newline ;
+
+node_attr       = ws , "is"   , sp , text_value , newline      (* summary *)
+                | ws , "why"  , sp , text_value , newline      (* detail  *)
+                | ws , "src"  , sp , path , { sp , path } , newline
+                | ws , "uses" , sp , word , { sp , word } , newline
+                | ws , "num"  , sp , label_text , "=" , value_text , newline ;
+
+edge_attr       = ws , "as"    , sp , slug , newline           (* explicit id *)
+                | ws , "carry" , sp , text_value , newline     (* payload     *)
+                | ws , "why"   , sp , text_value , newline
+                | ws , "vol"   , sp , number , newline         (* 0.0 .. 1.0  *)
+                | ws , "via"   , sp , position_pair ,
+                        { sp , position_pair } , newline ;
+
+tab_attr        = ws , "h"    , sp , text_value , newline
+                | ws , "p"    , sp , text_value , newline
+                | ws , "note" , sp , text_value , newline
+                | ws , "code" , sp , block_intro , newline , block
+                | ws , "---"  , newline ;                      (* rule *)
+
+(* -- values --------------------------------------------------------------- *)
+
+text_value      = inline_text | ( block_intro , newline , block ) ;
+inline_text     = { any - newline } ;        (* to end of line, then trimmed *)
+
+block_intro     = ">"      (* folded:  lines joined with single spaces       *)
+                | "|" ;    (* literal: newlines preserved verbatim           *)
+
+(* A block consists of every following line indented STRICTLY MORE than the
+   line carrying the block_intro. It ends at the first line that is not, or at
+   end of file. The common leading indent is stripped. Blank lines inside a
+   block are kept: in a folded block they become a paragraph break, in a
+   literal block they are preserved as-is. *)
+block           = { block_line } ;
+block_line      = deeper_ws , { any - newline } , newline ;
+
+quoted          = '"' , { ( any - '"' ) | '\"' } , '"' ;
+slug            = lowercase , { lowercase | digit | "_" } ;   (* 2..48 chars *)
+label_text      = { any - "=" - newline } ;
+value_text      = { any - newline } ;
+path            = { any - sp - newline } ;
+word            = { any - sp - newline } ;
+number          = [ "-" ] , digit , { digit } , [ "." , digit , { digit } ] ;
+integer         = [ "-" ] , digit , { digit } ;
+position_pair   = integer , "," , integer ;
+
+ws              = { " " | "\t" } ;
+sp              = " " , { " " | "\t" } ;
+
+(* -- inline markup, valid inside any prose value ---------------------------
+   [[display text|node_id]]   links a phrase to a node, both directions
+   {{term}}                   marks a glossary term declared with `term`
+   Everything else is literal. There is no markdown and no HTML.
+   ------------------------------------------------------------------------ *)
+
+(* -- scoping rules ---------------------------------------------------------
+   `blueprint`  opens the document scope. Must be the first declaration.
+   `group`      opens a group. Every node declared after it belongs to it,
+                until the next `group`. This is why a node has no group field.
+   node_decl    opens a node scope.
+   edge_decl    opens an edge scope. Both endpoints must resolve; forward
+                references are fine, resolution happens after the whole parse.
+   `tab`        opens a narrative tab. `h`/`p`/`note`/`code`/`---` append
+                blocks to it in order.
+   `term`       is self-contained and does not open a scope.
+
+   An edge with no `as` is given the id `<from>__<to>`, truncated to 48 chars
+   and suffixed on collision.
+   ------------------------------------------------------------------------ *)
+
+==============================================================================
+
+# A complete worked example
+
+(source: https://gridwillow.com/examples/payments.bp — the file rendered on the front page)
+
+blueprint payments-platform
+  title The Payment Path
+  tagline what happens between a card tap and a settled ledger row
+  branch main
+  stamp v4.2.0
+
+stat Services = 14 · 3 languages
+stat Peak = 4,200 req/s
+stat p99 = 340 ms end to end
+stat Ledger = 1.4 TB · single writer
+stat On call = 2 engineers
+stat Regions = us-east-1 · eu-west-1
+
+group edge "The edge"
+  note everything before the request is ours
+
+cdn edge_cache "CDN"
+  is caches the hosted checkout page and its assets, nothing else
+  why >
+    Payment requests are never cached. The rule is enforced at the edge by a
+    header allowlist rather than by convention, because someone will
+    eventually add a caching header to an API response by accident.
+  fact Provider = Cloudflare
+  fact TTL = 300 s on static only
+  link Config = https://wiki/infra/cdn
+
+lb ingress "Load balancer" x1.2
+  is terminates TLS and picks a healthy checkout instance
+  why >
+    Two of them, one per zone, sharing a floating address. Health checks are
+    shallow on purpose: a deep check that touched the ledger took the whole
+    pool down in March when a slow query made every instance look sick.
+  fact Zones = 2
+  fact Check = GET /healthz, 2 s timeout
+  src infra/nginx/
+  uses nginx
+  env TLS_CERT_PATH TLS_KEY_PATH
+
+client merchant_site "Merchant site"
+  is the shop the cardholder actually thinks they are on
+  why >
+    Loads a hosted field in an iframe so the card number never touches
+    merchant code. That single decision is what keeps every one of our
+    customers out of the widest part of PCI scope.
+
+group core "The core"
+  note the state machine, and the one place truth lives
+
+svc checkout "Checkout" x1.6
+  is turns a cart into an authorised payment
+  why >
+    Owns the state machine and nothing else. Every transition is written to
+    the ledger before the call that causes it, never after, so a crash
+    mid-flight leaves a recoverable record rather than a mystery.
+  fact Language = Rust
+  fact Instances = 6
+  fact States = created, authorising, authorised, captured, refunded, failed
+  list Endpoints = POST /v1/checkout, POST /v1/capture, POST /v1/refund
+  src services/checkout/
+  uses axum tokio sqlx
+  num Instances = 6
+  link Runbook = https://wiki/runbooks/checkout
+
+db orders "Orders" x1.5
+  is the ledger — every authorisation, capture and refund ever taken
+  why >
+    Postgres with a single writer and two read replicas. It is the only
+    store in the system permitted to be a source of truth; everything else
+    is a cache, an index, or a copy that may be thrown away.
+  fact Engine = Postgres 16
+  fact Region = us-east-1
+  fact Replicas = 2 read
+  fact Backups = PITR, 7 days
+  list Tables = orders, order_items, captures, refunds, idempotency_keys
+  list Indexes = orders_customer_idx, orders_created_at_idx, idem_key_uniq
+  link Runbook = https://wiki/runbooks/orders-db
+  env DATABASE_URL PGBOUNCER_HOST
+  num Size = 1.4 TB
+
+cache idem "Idempotency"
+  is remembers which request ids have already been answered
+  why >
+    Redis in front of a Postgres table, not instead of it. A cache miss
+    costs a query; a cache that were the only record would let a retried
+    charge through the moment it evicted.
+  fact Engine = Redis 7
+  fact TTL = 24 h
+  fact Eviction = noeviction
+  env REDIS_URL
+
+topic events "Payment events" x1.2
+  is the fan-out point — one authorised payment, five interested readers
+  why >
+    Kafka, keyed by order id so a single order's events never reorder.
+    Consumers are all at-least-once, which is why every one of them is
+    written to be idempotent rather than merely careful.
+  fact Broker = Kafka 3.7
+  fact Partitions = 24
+  fact Key = order_id
+  list Topics = payments.authorised, payments.captured, payments.refunded
+  env KAFKA_BROKERS KAFKA_SASL_USER
+
+group downstream "Downstream"
+
+worker settlement "Settlement" x1.2
+  is batches captured payments into daily files for the acquirer
+  why >
+    Runs against the read replica, never the writer. The file format is
+    fixed-width and forty years old, which is the reason this is a separate
+    service rather than a function inside checkout.
+  fact Schedule = 02:00 UTC daily
+  fact Format = fixed-width, 512 bytes
+  src services/settlement/
+  uses python pandas
+
+svc ledger_api "Ledger API"
+  is read-only queries over the ledger for the dashboard and support
+  why >
+    Deliberately has no write path at all. Support tooling that can only
+    read is support tooling that cannot cause an incident at 3am.
+  list Endpoints = GET /v1/orders, GET /v1/orders/{id}, GET /v1/refunds
+  src services/ledger-api/
+  uses axum
+
+svc notifier "Notifier"
+  is sends receipts and failure notices
+  why >
+    Consumes the event topic and calls the mail provider. A failure here is
+    logged and dropped rather than retried forever, because a receipt that
+    arrives three days late is worse than one that never arrives.
+  uses sendgrid
+
+bucket archive "Archive"
+  is settled files and their acknowledgements, kept for seven years
+  why >
+    Object lock is on and the retention period is not something the
+    application credentials can change. That is a compliance requirement
+    and also the only backstop if the ledger is ever wrong.
+  fact Storage = S3, object lock
+  fact Retention = 7 years
+  env S3_BUCKET AWS_REGION
+
+group outside "Not ours"
+
+ext processor "Card processor" x1.3
+  is the network that actually moves the money
+  why >
+    The slowest thing in the path by an order of magnitude, and the only
+    dependency with no fallback. Every timeout budget in the system is
+    derived from theirs rather than chosen.
+  fact p99 = 280 ms
+  fact Timeout = 8 s
+  fact Fallback = none
+  link Status = https://status.processor.example
+
+ext acquirer "Acquirer"
+  is the bank that receives the daily settlement file
+  why >
+    Accepts files over SFTP on a schedule measured in hours. That is the
+    reason settlement is a batch job in a system that is otherwise entirely
+    event-driven, and the reason it is the only thing here without a retry.
+
+group ops "Operations"
+
+cron reconciler "Reconciler"
+  is finds orders whose state and the processor disagree
+  why >
+    Runs every fifteen minutes over anything stuck in authorising for more
+    than two. It exists because the write-before-call ordering guarantees a
+    recoverable record, and something has to actually recover it.
+  fact Schedule = */15 * * * *
+  fact Window = 2 h lookback
+  src services/reconciler/
+  link Runbook = https://wiki/runbooks/reconciler
+
+svc metrics "Metrics"
+  is scrapes every service and drives the alerts
+  why >
+    One alert pages: a sustained 5xx rate at the load balancer. Everything
+    else is a dashboard, because an alert nobody acts on trains people to
+    ignore the ones that matter.
+  fact Stack = Prometheus + Grafana
+  list Paging alerts = ingress_5xx_rate
+  link Dashboard = https://grafana/d/payments
+
+lib contracts "Contracts"
+  is the shared event and API schemas every service builds against
+  why >
+    Versioned and additive-only. A consumer written last year still parses
+    an event produced today, which is what lets services deploy on their
+    own schedule instead of together.
+  fact Format = protobuf
+  src contracts/
+  list Schemas = payment_authorised, payment_captured, payment_refunded
+
+# ----------------------------------------------------------------------
+# connections
+# ----------------------------------------------------------------------
+
+merchant_site -call-> edge_cache "the page"
+  carry GET /checkout/{session_id}
+  why >
+    The hosted field, loaded in an iframe. Cached hard, because it changes
+    with a deploy and never with a request.
+  vol 0.5
+
+edge_cache -call-> ingress "a tap"
+  carry POST /v1/checkout {cart_id, payment_method, idempotency_key}
+  why >
+    The only inbound write path in the system. A sustained 5xx here is the
+    one alert that pages someone.
+  vol 0.9
+
+ingress -call-> checkout "routed"
+  carry POST /v1/checkout to a healthy instance
+  why >
+    Least-connections across six instances. A draining instance finishes
+    its in-flight state transitions before it leaves the pool.
+  vol 0.9
+
+checkout -read-> idem "seen this?"
+  carry GET idem:{idempotency_key}
+  why >
+    First thing on every write path. A hit returns the original response
+    verbatim rather than doing the work again.
+  vol 0.85
+
+checkout -write-> orders "the authorisation"
+  carry INSERT INTO orders (id, cart_id, state, amount_cents)
+  why >
+    Written before the processor is called, never after. If the process
+    dies between the two, the reconciler finds the orphan by its state.
+  vol 0.8
+
+checkout -call-> processor "the charge"
+  carry POST /authorizations {amount, token, merchant_id}
+  why >
+    The slow one, on an eight-second budget. A timeout is not a failure:
+    the order stays in authorising and the reconciler resolves it.
+  vol 0.75
+
+checkout -event-> events "authorised"
+  carry payments.authorised {order_id, amount_cents, captured_at}
+  why >
+    Emitted after the ledger write commits, so no consumer can ever see an
+    event for an order that is not yet durable.
+  vol 0.7
+
+contracts -read-> checkout "schemas"
+  carry payment_authorised.proto
+  why >
+    Compiled at build time, not fetched at runtime. A schema change that
+    breaks a consumer fails their build rather than their pager.
+  vol 0.2
+
+events -data-> notifier "receipts"
+  carry payments.authorised, payments.captured
+  why >
+    At-least-once, so the notifier dedupes on order id. A duplicate receipt
+    is embarrassing; a duplicate charge would be worse.
+  vol 0.5
+
+events -data-> settlement "the day's captures"
+  carry payments.captured
+  why >
+    Buffered until the nightly run rather than acted on immediately, which
+    is the whole reason this goes through a topic instead of a call.
+  vol 0.4
+
+settlement -read-> orders "the batch"
+  carry SELECT … FROM orders WHERE state = 'captured' AND day = $1
+  why >
+    Against a read replica. It is the heaviest query in the system and it
+    is deliberately nowhere near the writer.
+  vol 0.3
+
+settlement -write-> archive "the file"
+  carry PUT settlements/{date}.txt
+  why >
+    Written before it is sent, so a failed transfer can be retried without
+    regenerating anything. Object lock means it cannot be rewritten after.
+  vol 0.25
+
+settlement -call-> acquirer "the transfer"
+  carry SFTP PUT settlements/{date}.txt
+  why >
+    Once a day, over a protocol older than most of the team. A failure here
+    is a phone call the next morning, not a page tonight.
+  vol 0.2
+
+ledger_api -read-> orders "support queries"
+  carry SELECT * FROM orders WHERE id = $1
+  why >
+    Read replica, no write path anywhere in the service. Support tooling
+    that cannot write is support tooling that cannot cause an incident.
+  vol 0.4
+
+reconciler -read-> orders "the stuck ones"
+  carry SELECT … WHERE state = 'authorising' AND updated_at < now() - '2h'
+  why >
+    Every fifteen minutes. Finds orders whose write landed but whose
+    processor call never came back.
+  vol 0.3
+
+reconciler -call-> processor "what really happened?"
+  carry GET /authorizations/{id}
+  why >
+    Asks the processor for the truth and moves the order to match. This is
+    the only place in the system where their record wins over ours.
+  vol 0.2
+
+reconciler -write-> orders "the correction"
+  as reconciler_correction
+  carry UPDATE orders SET state = $1 WHERE id = $2
+  why >
+    The one write outside checkout, and it only ever moves an order out of
+    authorising. Anything else it finds is escalated rather than fixed.
+  vol 0.2
+
+checkout -event-> metrics "instrumentation"
+  carry /metrics — request counts, state transitions, processor latency
+  why >
+    Scraped every fifteen seconds. Processor latency is the number that
+    predicts an incident earliest.
+  vol 0.6
+
+ingress -event-> metrics "5xx rate"
+  carry nginx status, per-upstream
+  why >
+    The only signal wired to a pager. Everything else is a dashboard,
+    because an alert nobody acts on trains people to ignore all of them.
+  vol 0.5
+
+# ----------------------------------------------------------------------
+# narrative
+# ----------------------------------------------------------------------
+
+tab what "What it does"
+
+  h The Payment Path
+
+  p >
+    A card tap arrives at [[the load balancer|ingress]] and leaves as a row in
+    [[the ledger|orders]]. Everything in between is one state machine, owned by
+    one service, writing to one store that is allowed to be true.
+
+  p >
+    The shape of this drawing is the shape of the argument: a narrow write path
+    down the middle, a {{fan-out}} to everything that merely wants to know, and
+    a batch job off to the side that talks to a bank over a protocol older than
+    most of the team.
+
+  note >
+    Hover a block for what it is. Click one for everything about it — table
+    names, environment variables, runbooks, and every connection in and out.
+
+  h The one ordering rule
+
+  p >
+    [[Checkout|checkout]] writes to the ledger before it calls
+    [[the processor|processor]], never after. That ordering is the single
+    invariant the whole system rests on: a crash between the two leaves a row
+    in authorising, and [[the reconciler|reconciler]] resolves it against the
+    processor's own record fifteen minutes later.
+
+  p >
+    Reverse it and a crash leaves money moved with nothing to show for it.
+    There is no clever recovery from that, which is why the rule is stated in
+    the code, in the runbook, and here.
+
+tab how "How it's built"
+
+  h Three tiers, three failure modes
+
+  p >
+    The synchronous path — [[edge|ingress]], [[checkout|checkout]],
+    [[ledger|orders]] — fails loudly and pages someone. The event path
+    ([[the topic|events]] and its readers) fails quietly and catches up.
+    [[Settlement|settlement]] fails on a daily cadence and is somebody's
+    morning.
+
+  p >
+    Keeping those three apart is most of the design. Nothing on the paging path
+    is allowed to depend on anything that is merely eventually consistent.
+
+  h Idempotency, twice
+
+  p >
+    Every write carries a key, checked against [[Redis|idem]] first and a
+    Postgres table behind it. The cache is an optimisation and is treated like
+    one: a miss costs a query, and a cache that were the only record would let
+    a retried charge through the moment it evicted.
+
+  code |
+    curl -XPOST https://api.example/v1/checkout \
+      -H 'Idempotency-Key: 8f14e45f' \
+      -d @cart.json
+
+  h What is deliberately missing
+
+  p >
+    No service mesh, no read-your-writes across regions, no fallback processor.
+    Each is a real gap, each was cheaper to live with than to run, and each is
+    written down here so the next person does not have to guess whether it was
+    an oversight.
+
+  ---
+
+  p >
+    Everything on this screen was generated from one 300-line text file. Change
+    a line, save, and the drawing redraws.
+
+term "fan-out" >
+  One producer writing to a topic that several independent consumers read,
+  each at its own pace and without knowing about the others.

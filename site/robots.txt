@@ -1,0 +1,15 @@
+# gridwillow.com
+#
+# Everything here is meant to be read by machines as much as by people. Crawl it.
+# The reference documentation is served as HTML and, at the same path with .md
+# appended, as raw markdown. /llms.txt indexes every document; /llms-full.txt is
+# all of them concatenated into one fetch.
+
+User-agent: *
+Allow: /
+
+# A megabyte of generated three.js scene. It is worth opening in a browser and
+# worthless as text, so it is not worth anyone's crawl budget.
+Disallow: /payments.blueprint.html
+
+Sitemap: https://gridwillow.com/sitemap.xml

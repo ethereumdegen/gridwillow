@@ -1,0 +1,732 @@
+blueprint codebase-blueprint-ai
+  title The Blueprint Press
+  tagline >
+    a language model reads a repo, writes one JSON file, and a fixed renderer
+    prints the drawing
+  branch v1
+
+stat Node kinds = 8 fixed
+stat Edge kinds = 6 fixed
+stat LLM writes = 1 file — the JSON
+stat Output = 1 HTML · 0 deps
+stat Renderer = three.js r169, ortho
+
+group authoring "The authoring pass"
+  note the only part a model performs
+
+entry repo_survey "Repo survey" x1.2
+  is >
+    reads the manifest, the entrypoints and the directory tree before deciding
+    anything
+  why >
+    The first phase of PROMPT.md. It reads package.json / Cargo.toml /
+    pyproject, finds the binaries and servers, and walks the tree two levels
+    deep. Nothing is written during this pass — its only job is to stop the
+    model from inventing an architecture before it has seen one.
+  src PROMPT.md
+  num Phase = 1 of 6
+
+svc node_census "Node census" x1.3
+  is turns directories and modules into 15-40 subsystems, not files
+  why >
+    Collapses the tree into the units a reader would actually name out loud.
+    Leaf modules get folded into their parent and mentioned in that parent's
+    detail text instead of becoming their own block. The 15-40 band is
+    enforced as a warning by the validator, because under 15 the drawing is
+    trivial and over 40 it turns to soup.
+  src PROMPT.md PROTOCOL.md
+  num Target = 15-40
+
+svc edge_tracing "Edge tracing" x1.2
+  is finds real calls, channels, tables and routes — and deletes the rest
+  why >
+    Every connection has to name something concrete in its payload field: a
+    type signature, a function, an SQL table, an HTTP route. The rule is
+    deliberately harsh — if the model cannot name what crosses a line, the
+    line is not real and gets dropped. This is what keeps the diagram from
+    degenerating into boxes joined by vibes.
+  src PROMPT.md
+  uses grep ripgrep
+
+svc narrative_draft "Narrative draft"
+  is >
+    writes the right-hand panel in plain English and links phrases back to
+    blocks
+  why >
+    Produces the WHAT IT DOES and HOW IT'S BUILT tabs as typed blocks rather
+    than HTML, so the panel can never break the layout. Phrases wrapped in
+    double brackets become live references: hovering one lights up the
+    matching block in the drawing, and hovering the block lights up every
+    phrase pointing at it.
+  src PROMPT.md
+  num Tabs = 2-4
+
+model authoring_model "Authoring model" x1.1
+  is the language model running the six phases against a checked-out repo
+  why >
+    Any model with file-reading tools and enough context to hold a repo
+    survey. It never touches the renderer, the stylesheet, or the build script
+    — its entire output surface is one JSON document. That restriction is the
+    whole reason results are reproducible instead of a new invention every
+    run.
+  uses claude read grep
+
+group contract "The contract"
+  note what the two halves agree on
+
+store codeviz_json "codeviz.json" x1.8
+  is >
+    the single hand-authored artifact: meta, stats, groups, nodes, edges,
+    narrative
+  why >
+    Six top-level keys and nothing else. This file is the entire interface
+    between the model and the drawing, which means it is also the thing you
+    edit by hand when the model gets a detail wrong. Re-running the build
+    after a manual edit takes under a second.
+  src examples/self.codeviz.json
+  num Top-level keys = 6
+
+lib json_schema "JSON Schema"
+  is draft 2020-12 definition of every field, enum and length limit
+  why >
+    Machine-readable and strict: additionalProperties is false everywhere, so
+    a typo'd field name is an error rather than silently ignored data. Field
+    descriptions double as authoring guidance, which is why they read like
+    instructions instead of documentation.
+  src schema/codeviz.schema.json
+  uses json-schema
+
+svc validator "Validator" x1.4
+  is >
+    checks structure, cross-references and prose quality with zero
+    dependencies
+  why >
+    Re-implements the schema by hand so it can also check the things JSON
+    Schema cannot express: that every edge endpoint resolves, that every
+    bracketed narrative reference points at a real node, that no node is left
+    unwired. Errors block the build; warnings — vague payloads,
+    single-sentence details, marketing language in the tagline — print and let
+    it through.
+  src scripts/validate.mjs
+  num Dependencies = 0
+  num Rule classes = 2
+
+lib kind_table "Kind table"
+  is the fixed map from node kind to footprint, height and hatching
+  why >
+    Eight node kinds and six edge kinds, closed sets. Because the mapping is a
+    table rather than a model decision, a store always reads as a laminated
+    slab and a queue always reads as a ribbed stack — across every repo,
+    forever. The visual grammar stays learnable.
+  src template/renderer.js PROTOCOL.md
+  num Node kinds = 8
+  num Edge kinds = 6
+
+group bake "The bake"
+
+entry build_cli "build.mjs" x1.2
+  is one command that validates, inlines and writes the finished file
+  why >
+    Takes a codeviz.json and emits a standalone HTML document. It refuses to
+    build on validation errors unless you pass --force, which exists for the
+    case where you want to look at a half-finished blueprint while you fix it.
+  src scripts/build.mjs
+  uses node
+
+svc inliner "Inliner"
+  is splices stylesheet, renderer, three.js and data into one document
+  why >
+    three.js is embedded as a base64 data URL inside an import map, which
+    Chrome and Firefox resolve happily even from file://. That one trick is
+    what removes the need for a dev server, a bundler, or a network connection
+    when someone opens the result.
+  src scripts/build.mjs template/index.html
+  num External refs = 0
+
+ext three_vendor "Vendored three.js"
+  is r169 module build, checked into the repo rather than fetched
+  why >
+    Pinned on purpose. A CDN reference would mean a blueprint you generated
+    last year silently changes behaviour when the CDN moves, and would break
+    entirely on a machine without internet. The cost is about 660 KB in every
+    output file.
+  src vendor/three.module.min.js
+  uses three@0.169
+  num Size = ~660 KB
+
+store blueprint_html "Blueprint HTML" x1.5
+  is the deliverable: one file, no server, no network, no install
+  why >
+    Roughly a megabyte, most of it three.js. You can email it, drop it in a
+    wiki, or commit it next to the repo it describes. Opening it from disk
+    works because nothing inside it points anywhere outside itself.
+  num Files = 1
+  num Runtime deps = 0
+
+group drawing "The drawing"
+  note runs in the browser, every frame
+
+entry data_intake "Data intake"
+  is parses the embedded JSON and quarantines broken references
+  why >
+    Reads the inline JSON block, checks the protocol version, then filters out
+    nodes with unknown groups or kinds and edges with unresolvable endpoints.
+    Dropped items are collected and logged rather than thrown, so a
+    nearly-correct blueprint still draws and the damage is visible in the
+    console.
+  src template/renderer.js
+
+svc layout_engine "Layout engine" x1.4
+  is groups become bands, longest-path rank becomes columns, then it recentres
+  why >
+    Each group gets a horizontal band on the floor; inside a band, nodes are
+    ranked by longest path from their sources and stacked to fill the depth.
+    Cycles are handled by bounding the relaxation passes rather than by
+    detecting them. There is no randomness anywhere, so the same JSON always
+    yields the identical arrangement.
+  src template/renderer.js
+  num Random calls = 0
+
+svc geometry_factory "Geometry factory" x1.2
+  is extrudes each block and gives every visible face its own material
+  why >
+    Box faces get different flat colours to fake the lighting, so the scene
+    needs no lights at all and stays perfectly crisp. Stores are built as
+    several stacked sheets and queues as a row of thin plates, which is what
+    makes those two kinds recognisable at a glance from across the drawing.
+  src template/renderer.js
+  uses three
+
+svc route_planner "Route planner"
+  is orthogonal routes with chamfered corners, anchored to block silhouettes
+  why >
+    Lines leave a block at its edge rather than its centre, take at most one
+    dog-leg, and have their corners cut at forty-five degrees. Each route also
+    gets an invisible fat tube alongside it so a one-pixel hairline is still
+    something you can actually hover.
+  src template/renderer.js
+  num Corner cut = 0.30 u
+
+queue packet_field "Packet field" x1.3
+  is every travelling dot in one instanced draw call, capped at 900
+  why >
+    Each connection carries one to six packets depending on its declared
+    traffic volume, and all of them live in a single InstancedMesh whose
+    matrices are rewritten each frame. Hovering a line triples its packet
+    speed and switches those instances to the accent colour, which is how you
+    confirm which hairline you are actually reading.
+  src template/renderer.js
+  num Draw calls = 1
+  num Cap = 900
+
+lib hatch_atlas "Hatch atlas"
+  is vertical, cross and dot patterns drawn once into canvas textures
+  why >
+    Generated procedurally at startup and cached by pattern name, so nothing
+    ships as an image asset and the output file stays free of binary blobs.
+    The same generator draws the faint floor grid at a larger scale.
+  src template/renderer.js
+  uses canvas2d
+
+group surface "What you touch"
+
+svc camera_rig "Camera rig" x1.2
+  is orthographic, locked to true isometric, four rotation snaps only
+  why >
+    The camera sits along the (1,1,1) axis, which is exactly the classic
+    isometric elevation. Free orbit is deliberately not offered — pan, zoom
+    and ninety-degree snaps are the whole control set, because an arbitrary
+    angle is what turns an engineering drawing back into a generic 3D toy.
+  src template/renderer.js
+  num Elevation = 35.264°
+
+svc pick_raycaster "Pick raycaster"
+  is one ray, blocks tested before lines
+  why >
+    Blocks win ties against connectors, so a line passing under a block never
+    steals the hover. Both hit types resolve to the same shape — a kind and an
+    id — which is why the sidebar, the narrative panel and the drawing can all
+    drive the same highlight state.
+  src template/renderer.js
+
+svc hover_card "Hover card" x1.1
+  is the reading surface: summary, detail, source paths, metrics, payload
+  why >
+    For a block it shows what the subsystem does, which files back it, what it
+    is built with and how many connections touch it. For a connector it shows
+    the two endpoints, the concrete payload, and a note on when the path fires
+    and what happens if it fails. The card flips sides near the viewport edge
+    so it never runs off-screen.
+  src template/renderer.js template/style.css
+
+svc sidebar_index "Sidebar index"
+  is every block listed under its group, with connection counts
+  why >
+    Hovering a row highlights the block and its neighbours; clicking one flies
+    the camera to it and pins the selection. It is the only way to find a
+    block whose label is currently hidden because you are zoomed out past the
+    label threshold.
+  src template/renderer.js template/style.css
+
+svc narrative_panel "Narrative panel" x1.1
+  is tabbed prose whose highlighted phrases are wired to the blocks
+  why >
+    Blocks of typed text are rendered rather than raw HTML, and the two inline
+    markups — node references and glossary terms — are the only formatting
+    allowed. Everything else is escaped, so a stray angle bracket in a model's
+    prose cannot break the page.
+  src template/renderer.js template/style.css
+  num Inline markups = 2
+
+job frame_loop "Frame loop"
+  is eases the camera, advances the packets, repositions the labels
+  why >
+    A single requestAnimationFrame loop that pauses itself when the tab goes
+    to the background. Node labels are HTML rather than 3D text, so they stay
+    crisp at any zoom; the loop projects each block's top point to screen
+    coordinates and moves the divs to match.
+  src template/renderer.js
+  num rAF loops = 1
+
+# ----------------------------------------------------------------------
+# connections
+# ----------------------------------------------------------------------
+
+repo_survey -data-> node_census "directory tree"
+  as e_survey_census
+  carry manifest + entrypoint list + two-level tree
+  why >
+    Hands over everything the survey found without interpreting it. The census
+    is the first point where a judgement call gets made, and it can only be as
+    good as this list.
+  vol 0.6
+
+repo_survey -data-> edge_tracing "entrypoints"
+  as e_survey_edges
+  carry bin targets, server mains, exported handlers
+  why >
+    Tracing starts from the entrypoints and follows calls outward. Without
+    them the model tends to guess at connections from directory names alone.
+  vol 0.4
+
+node_census -data-> edge_tracing "node ids"
+  as e_census_edges
+  carry the settled set of subsystem ids
+  why >
+    Edges cannot be traced until the nodes are fixed, because an edge is only
+    meaningful between two named subsystems. Adding a node later means
+    re-checking every edge that should now terminate on it.
+  vol 0.8
+
+authoring_model -call-> node_census "runs the census"
+  as e_model_census
+  carry phase 2 of PROMPT.md
+  why >
+    The model performs each phase in order rather than emitting the JSON in
+    one pass. Skipping ahead is the single most common cause of a blueprint
+    full of plausible but wrong edges.
+  vol 0.9
+
+authoring_model -call-> narrative_draft "writes the panel"
+  as e_model_narr
+  carry phase 4 of PROMPT.md
+  why >
+    Prose is written last, once the graph is settled, so the narrative can
+    reference real node ids. Writing it first reliably produces references to
+    nodes that never get created.
+  vol 0.6
+
+node_census -write-> codeviz_json "nodes[]"
+  as e_census_json
+  carry nodes[] with kind, group, summary, detail, paths
+  why >
+    Each subsystem becomes one node object. The kind field is chosen from the
+    closed enum, never invented.
+  vol 0.9
+
+edge_tracing -write-> codeviz_json "edges[]"
+  as e_edges_json
+  carry edges[] with from, to, kind, payload, detail
+  why >
+    Only connections with a nameable payload survive to this point. The
+    payload string is what a reader sees in the connector hover card, so it is
+    written for a human, not as an internal note.
+  vol 0.85
+
+narrative_draft -write-> codeviz_json "narrative"
+  as e_narr_json
+  carry narrative.tabs[].blocks[] and narrative.glossary[]
+  why >
+    Prose arrives as typed blocks with two permitted inline markups. Raw HTML
+    is escaped on render, so anything fancier than that simply shows up as
+    literal text.
+
+json_schema -read-> authoring_model "field contract"
+  as e_schema_model
+  carry enums, length limits, required keys, descriptions
+  why >
+    The schema's descriptions are written as instructions rather than
+    documentation, so a model reading the schema alone still authors
+    reasonable content. It is included verbatim in the prompt for exactly that
+    reason.
+  vol 0.7
+
+kind_table -read-> authoring_model "shape vocabulary"
+  as e_kind_model
+  carry kind -> footprint, height, hatch, glyph
+  why >
+    The model picks a kind knowing what shape it will produce, which lets it
+    reason about how the finished drawing will read. It cannot change the
+    mapping.
+
+codeviz_json -read-> validator "candidate blueprint"
+  as e_json_validator
+  carry the parsed document
+  why >
+    Validation runs before anything is inlined. Catching a dangling edge here
+    costs a second; catching it after delivery costs a round trip with whoever
+    you sent the file to.
+  vol 0.8
+
+json_schema -read-> validator "mirrored rules"
+  as e_schema_validator
+  carry enums and limits, hand-copied into validate.mjs
+  why >
+    Deliberate duplication: it keeps the validator dependency-free and lets it
+    add cross-reference and prose checks that JSON Schema has no way to
+    express. The cost is that both files have to move together.
+  vol 0.3
+
+build_cli -call-> validator "validate first"
+  as e_cli_validator
+  carry validate(data) -> { errors, warns }
+  why >
+    Errors abort the build unless --force is passed. Warnings always print and
+    never block, because most of them are style advice rather than breakage.
+  vol 0.7
+
+build_cli -call-> inliner "splice"
+  as e_cli_inliner
+  carry template + css + renderer + three + data
+  why >
+    The inliner matches two anchor patterns in the template and refuses to run
+    if either has drifted. That guard exists because a silently half-inlined
+    file looks fine until someone opens it offline.
+  vol 0.8
+
+three_vendor -read-> inliner "base64 import map"
+  as e_three_inliner
+  carry data:text/javascript;base64,… bound to the specifier "three"
+  why >
+    Encoding the library as a data URL inside an import map is what lets the
+    module graph resolve under file://, where a relative module import would
+    be blocked by CORS.
+  vol 0.4
+
+codeviz_json -data-> inliner "embedded data"
+  as e_json_inliner
+  carry <script type="application/json" id="codeviz-data">
+  why >
+    The document is pretty-printed into a JSON script tag, with any
+    closing-script sequence escaped. That means you can open a built blueprint
+    in an editor and read its data straight out of the file.
+  vol 0.6
+
+inliner -write-> blueprint_html "one file out"
+  as e_inliner_html
+  carry ~1 MB HTML with zero external references
+  why >
+    This is the only artifact anyone else ever sees. Everything upstream of it
+    is machinery.
+  vol 0.9
+
+blueprint_html -read-> data_intake "on load"
+  as e_html_intake
+  carry JSON.parse of #codeviz-data
+  why >
+    If the block is missing, unparseable, or still the unfilled placeholder,
+    the renderer shows the no-data panel with the exact reason instead of a
+    blank canvas.
+
+data_intake -data-> layout_engine "clean graph"
+  as e_intake_layout
+  carry nodes and edges with every reference resolved
+  why >
+    Layout runs exactly once, at startup. Nothing downstream re-positions a
+    block, which is why panning and rotating never rearrange the drawing under
+    you.
+  vol 0.7
+
+layout_engine -data-> geometry_factory "floor coordinates"
+  as e_layout_geo
+  carry node._x / node._z in world units
+  why >
+    Positions are settled before any mesh exists. Manual pos overrides in the
+    JSON are applied here and win over the computed rank.
+  vol 0.8
+
+layout_engine -data-> route_planner "block silhouettes"
+  as e_layout_route
+  carry footprint half-extents per node
+  why >
+    Routing needs the footprints, not just the centres, so lines can terminate
+    on a block's edge. This is why routes are planned after geometry sizing
+    rather than alongside it.
+  vol 0.6
+
+hatch_atlas -read-> geometry_factory "face textures"
+  as e_hatch_geo
+  carry CanvasTexture per pattern name, cached
+  why >
+    Three patterns cover all eight node kinds. Side faces are hatched and top
+    faces mostly left plain, which is what gives the blocks their
+    drawn-by-hand read.
+  vol 0.3
+
+kind_table -read-> geometry_factory "shape lookup"
+  as e_kind_geo
+  carry KIND[node.kind] -> { fp, h, hatch, ribs, slabs }
+  why >
+    A single table lookup decides the entire appearance of a block. Weight
+    scales it, but never changes which shape it is.
+
+route_planner -data-> packet_field "arc-length tables"
+  as e_route_packets
+  carry cumulative segment lengths per route
+  why >
+    Precomputing the lengths turns per-frame packet placement into a short
+    walk plus one lerp. Without it, every packet would re-measure its whole
+    route sixty times a second.
+  vol 0.75
+
+geometry_factory -data-> pick_raycaster "block targets"
+  as e_geo_pick
+  carry meshes tagged with userData.nodeId
+  why >
+    Every mesh that makes up a block carries the same node id, so a stacked
+    store with five sheets still resolves to one hover target.
+
+route_planner -data-> pick_raycaster "line targets"
+  as e_route_pick
+  carry invisible tube meshes tagged with userData.edgeId
+  why >
+    The tubes are fully transparent but still visible to the raycaster, which
+    is the trick that makes a hairline hoverable. They are tested only after
+    the blocks miss.
+
+pick_raycaster -event-> hover_card "hover changed"
+  as e_pick_card
+  carry { type: 'node' | 'edge', id }
+  why >
+    Fires only on an actual change of target, so the card is not rebuilt on
+    every mouse move. The same event drives the highlight repaint across all
+    three panels.
+  vol 0.9
+
+pick_raycaster -event-> packet_field "boost"
+  as e_pick_packets
+  carry edgeView.boost = 1
+  why >
+    Hovering anything raises the boost flag on the touched connections. The
+    packets on those lines then run about three times faster and switch to the
+    accent colour.
+  vol 0.6
+
+sidebar_index -event-> pick_raycaster "synthetic hover"
+  as e_side_pick
+  carry setHover({ type: 'node', id })
+  why >
+    Sidebar rows and narrative references push the same hover state the
+    raycaster would, so the highlight logic has exactly one implementation.
+    Clicking instead pins a selection and moves the camera.
+
+narrative_panel -event-> pick_raycaster "phrase hover"
+  as e_narrpanel_pick
+  carry setHover from a [[…|node_id]] span
+  why >
+    This is the link that makes the prose and the drawing feel like one
+    object: read a sentence, and the thing it names lights up beside it.
+
+sidebar_index -call-> camera_rig "fly to block"
+  as e_side_cam
+  carry focusNode(id)
+  why >
+    Sets the camera's target and a minimum zoom, both of which the frame loop
+    then eases toward. Nothing snaps, so you keep your bearings.
+  vol 0.4
+
+frame_loop -call-> camera_rig "ease"
+  as e_loop_cam
+  carry lerp of target, zoom and yaw each frame
+  why >
+    All camera motion is a goal plus an exponential ease, so competing inputs
+    — a click, a drag, a keypress — blend instead of fighting. Rotation is
+    quantised to ninety degrees before easing.
+  vol 0.95
+
+frame_loop -call-> packet_field "advance"
+  as e_loop_packets
+  carry setMatrixAt + instanceColor per packet
+  why >
+    One pass over every packet per frame, writing straight into the instance
+    buffers. The 900-packet cap keeps that pass bounded no matter how busy the
+    graph is.
+  vol 1
+
+frame_loop -call-> narrative_panel "project labels"
+  as e_loop_labels
+  carry Vector3.project -> CSS transform per label
+  why >
+    Labels are HTML divs pushed around by the loop rather than 3D text, so
+    they stay pixel-crisp and can use the real font. Below a zoom threshold
+    they fade out entirely to keep the field readable.
+  vol 0.7
+
+# ----------------------------------------------------------------------
+# narrative
+# ----------------------------------------------------------------------
+
+tab what "What it does"
+
+  h The Blueprint Press
+
+  p >
+    This repository turns a codebase into the drawing you are currently
+    looking at. You point a language model at a repo, it produces a single
+    JSON file, and a fixed renderer prints that file as an animated isometric
+    plan you can hover your way through.
+
+  p >
+    The important design decision is what the model is allowed to write. It
+    does not write HTML, or CSS, or three.js code. It writes [[one JSON
+    document|codeviz_json]] and nothing else. Everything you see — the
+    hatching, the routing, the camera, the panels — is fixed machinery that
+    behaves identically for every repo it is ever pointed at.
+
+  p >
+    That split is why the results are comparable. Two blueprints of two
+    different systems can be read side by side, because a laminated slab means
+    {{store}} in both of them and a ribbed stack means {{queue}} in both of
+    them. Ask a model to free-hand a diagram twice and you get two unrelated
+    visual languages.
+
+  h How to read the drawing
+
+  p >
+    Blocks are subsystems, not files. Their shape tells you what kind of thing
+    they are; the [[kind table|kind_table]] is closed, so the vocabulary is
+    small enough to learn in about a minute. Height and footprint scale with
+    declared weight, which is the author's way of saying this one matters
+    more.
+
+  p >
+    The hairlines on the floor are real connections. Every one of them names
+    something concrete — a type, a function, a table, a route — which you can
+    read by hovering it. Travelling dots show relative traffic; hovering a
+    line speeds its dots up so you can confirm you are reading the line you
+    think you are.
+
+  note >
+    Hover a block for what it does and which files back it. Hover a line for
+    what actually crosses it. Highlighted phrases in this panel are live —
+    hover one and its block lights up in the drawing.
+
+  h Making one
+
+  p >
+    Give a model with file access the prompt in PROMPT.md and a checked-out
+    repo. It runs a six-phase pass — [[survey|repo_survey]],
+    [[census|node_census]], [[tracing|edge_tracing]],
+    [[narrative|narrative_draft]], self-check, emit — and hands back a
+    codeviz.json.
+
+  code |
+    node scripts/validate.mjs my-repo.codeviz.json
+    node scripts/build.mjs   my-repo.codeviz.json
+
+  p >
+    The second command writes [[one self-contained HTML file|blueprint_html]].
+    No server, no bundler, no network. Open it off disk and it works.
+
+tab how "How it's built"
+
+  h Three parts that barely know each other
+
+  p >
+    The [[authoring pass|authoring_model]] is prose and judgement, performed
+    by a model. The [[contract|json_schema]] is a strict document format with
+    closed enums. The [[drawing|layout_engine]] is a fixed browser renderer.
+    Neither end can reach into the other, and that is the entire architecture.
+
+  h The contract does the enforcing
+
+  p >
+    Every field has a length limit and every enum is closed, with
+    additionalProperties set to false throughout — so a misspelled key is an
+    error rather than data that silently vanishes. The [[validator|validator]]
+    then re-checks by hand the things a schema cannot see: that both endpoints
+    of every connection resolve, that every bracketed phrase in this panel
+    points at a node that exists, that nothing is left unwired.
+
+  p >
+    It also nags about quality. A payload of just "data" is a warning. A
+    one-sentence hover detail is a warning. Marketing adjectives in the
+    tagline are a warning. None of them block a build; all of them are things
+    that make a blueprint worse to read.
+
+  h Why it looks like this
+
+  p >
+    The [[camera|camera_rig]] is orthographic and pinned to the (1,1,1) axis —
+    exactly the classic isometric elevation. Free orbit is not offered.
+    Ninety-degree snaps and panning are the whole control set, because the
+    moment you can tumble to an arbitrary angle the thing stops reading as an
+    engineering drawing.
+
+  p >
+    There are no lights in the scene. Faces are flat-coloured to fake the
+    shading, which keeps every edge perfectly crisp at any zoom and makes the
+    render cost trivial. The [[hatching|hatch_atlas]] is drawn procedurally
+    into canvas textures at startup, so the output file carries no image
+    assets.
+
+  p >
+    [[Connections|route_planner]] leave a block at its silhouette rather than
+    its centre, take at most one dog-leg, and have their corners cut at
+    forty-five degrees. Each hairline is shadowed by an invisible fat tube so
+    it can actually be hovered — a one-pixel line is otherwise impossible to
+    hit with a mouse.
+
+  h Determinism
+
+  p >
+    There is no Math.random and no clock-seeded value anywhere in the
+    renderer. [[Layout|layout_engine]] is a longest-path rank inside per-group
+    bands, with cycles handled by bounding the relaxation passes rather than
+    detecting them. The same JSON always produces the identical arrangement,
+    which means you can re-run a blueprint after editing one node and diff
+    what moved.
+
+  h Why three.js is checked in
+
+  p >
+    [[The library|three_vendor]] is vendored at r169 and embedded in every
+    output as a base64 data URL inside an import map. That resolves under
+    file://, where a relative module import would be blocked. It costs about
+    660 KB per file and buys a deliverable that will still render identically
+    on a laptop with no internet in five years.
+
+  ---
+
+  p >
+    Everything on this screen was generated from examples/self.codeviz.json,
+    which is the repository describing itself. If something here is wrong,
+    that file is the thing to edit.
+
+term "store" >
+  A node kind drawn as a laminated slab: a database, an archive, a
+  filesystem, or any other place data comes to rest.
+
+term "queue" >
+  A node kind drawn as a ribbed stack of thin plates: a channel, a buffer,
+  or a job queue — anything work waits in.

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — Gridwillow</title>
+<meta name="description" content="The Gridwillow language reference, the procedure for writing a blueprint from a codebase, the prose guide, the EBNF grammar and worked examples — each served as HTML and as raw markdown.">
+<link rel="canonical" href="https://gridwillow.com/docs/">
+
+<meta property="og:title" content="Documentation — Gridwillow">
+<meta property="og:description" content="The Gridwillow language reference, the procedure for writing a blueprint from a codebase, the prose guide, the EBNF grammar and worked examples — each served as HTML and as raw markdown.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gridwillow.com/docs/">
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+<header class="bar">
+  <a class="word" href="/">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#111"/>
+      <path d="M8 19l8-4.5 8 4.5-8 4.5z" fill="#cdc499"/>
+      <path d="M8 19v-4l8-4.5 8 4.5v4" fill="none" stroke="#cdc499" stroke-width="1.6"/>
+    </svg>
+    Gridwillow
+  </a>
+  <nav class="barlinks">
+    <a href="/docs/">Docs</a>
+    <a href="/llms.txt">llms.txt</a>
+    <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
+  </nav>
+</header>
+
+<main>
+
+  <article>
+<h1 id="documentation">Documentation</h1>
+<p class="lede">Gridwillow is a text language for software architecture. You write
+one <code>.bp</code> file describing a system — its services, stores, queues and
+the data that moves between them — and the compiler draws it as an isometric
+blueprint you can pan, hover and click through.</p>
+<p>Every reference page here is served twice: as HTML at the link, and as raw
+markdown at the same URL with <code>.md</code> on the end. If you are a coding
+agent, the shortest path is <a href="/llms-full.txt"><code>/llms-full.txt</code></a>
+— one fetch, everything below, enough to write a blueprint that compiles.</p>
+<h2 id="reference">Reference</h2>
+<ul class="index">
+    <li>
+      <a href="/docs/language">The .bp language</a>
+      <p>The complete language reference — the two rules, the whole syntax on one screen, the eight-shape table, the six connection kinds, every attribute by scope, prose blocks and inline markup, and what the checker treats as an error versus a warning. Read this one first.</p>
+    </li>
+    <li>
+      <a href="/docs/writing-a-blueprint">Writing a blueprint</a>
+      <p>The procedure to follow against a real codebase: survey before writing anything, choose 15–40 subsystem blocks, trace only the connections you can name, then let <code>bp check</code> grade the result.</p>
+    </li>
+    <li>
+      <a href="/docs/prose">Writing the prose</a>
+      <p>How to write <code>is</code>, <code>why</code> and <code>carry</code> so the hover cards are worth opening. The default register of generated documentation is the wrong one here, and this page is about correcting it.</p>
+    </li>
+    <li>
+      <a href="/docs/keeping-it-true">Keeping a blueprint true</a>
+      <p>The procedure for re-checking an existing blueprint against the code it claims to describe — moved paths, deleted functions, new tables — and rewriting only what actually drifted.</p>
+    </li>
+</ul>
+<h2 id="grammar-and-examples">Grammar and examples</h2>
+<ul class="index">
+    <li>
+      <a href="/docs/grammar.ebnf">/docs/grammar.ebnf</a>
+      <p>The formal grammar, in EBNF. The normative answer when the prose reference and your parser disagree.</p>
+    </li>
+    <li>
+      <a href="/docs/blueprint-ir.schema.json">/docs/blueprint-ir.schema.json</a>
+      <p>JSON Schema for the compiled intermediate form the renderer consumes. You never write this by hand; <code>bp build</code> emits it.</p>
+    </li>
+    <li>
+      <a href="/examples/payments.bp">/examples/payments.bp</a>
+      <p>A complete, checked blueprint of a payments platform — 16 blocks, 19 connections, groups, tabs and terms. The worked example, and the file rendered on the front page.</p>
+    </li>
+    <li>
+      <a href="/examples/self.bp">/examples/self.bp</a>
+      <p>Gridwillow’s own architecture as a blueprint — the compiler, the renderer and the app, drawn in their own language.</p>
+    </li>
+</ul>
+  </article>
+  <footer class="pagefoot">
+    
+    <p>Every document on this site is indexed in
+       <a href="/llms.txt"><code>/llms.txt</code></a> and concatenated into one
+       file at <a href="/llms-full.txt"><code>/llms-full.txt</code></a>.</p>
+  </footer>
+</main>
+</body>
+</html>

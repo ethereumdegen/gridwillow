@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The .bp language — Gridwillow</title>
+<meta name="description" content="The complete language reference — the two rules, the whole syntax on one screen, the eight-shape table, the six connection kinds, every attribute by scope, prose blocks and inline markup, and what the checker treats as an error versus a warning. Read this one first.">
+<link rel="canonical" href="https://gridwillow.com/docs/language">
+<link rel="alternate" type="text/markdown" href="https://gridwillow.com/docs/language.md" title="The .bp language as markdown">
+<meta property="og:title" content="The .bp language — Gridwillow">
+<meta property="og:description" content="The complete language reference — the two rules, the whole syntax on one screen, the eight-shape table, the six connection kinds, every attribute by scope, prose blocks and inline markup, and what the checker treats as an error versus a warning. Read this one first.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gridwillow.com/docs/language">
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+<header class="bar">
+  <a class="word" href="/">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#111"/>
+      <path d="M8 19l8-4.5 8 4.5-8 4.5z" fill="#cdc499"/>
+      <path d="M8 19v-4l8-4.5 8 4.5v4" fill="none" stroke="#cdc499" stroke-width="1.6"/>
+    </svg>
+    Gridwillow
+  </a>
+  <nav class="barlinks">
+    <a href="/docs/">Docs</a>
+    <a href="/llms.txt">llms.txt</a>
+    <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
+  </nav>
+</header>
+
+<main>
+  <p class="crumb"><a href="/docs/">Documentation</a></p>
+  <article>
+<h1 id="the-blueprint-dsl">The blueprint DSL</h1>
+<p>A <code>.bp</code> file describes a software system — its servers, databases, queues and the data that moves between them — and a fixed renderer draws it as an animated isometric engineering plan you can hover and click through.</p>
+<p>Think Mermaid, for infrastructure, in three dimensions.</p>
+<p><a href="/docs/grammar.ebnf"><code>spec/blueprint.ebnf</code></a> is the formal grammar. <a href="/docs/blueprint-ir.schema.json"><code>spec/blueprint-ir.schema.json</code></a> is the compiled form the renderer consumes. This file is the one to read.</p>
+<nav class="toc" aria-label="On this page"><b>On this page</b><ol><li><a href="#two-rules-carry-the-whole-design">Two rules carry the whole design</a></li><li><a href="#the-whole-language-on-one-screen">The whole language, on one screen</a></li><li><a href="#the-shape-table">The shape table</a></li><li><a href="#the-line-table">The line table</a></li><li><a href="#attributes-by-scope">Attributes by scope</a></li><li><a href="#the-inspector">The inspector</a></li><li><a href="#prose-values">Prose values</a></li><li><a href="#errors-and-warnings">Errors and warnings</a></li><li><a href="#what-you-do-not-control">What you do not control</a></li><li><a href="#layout-if-you-are-curious">Layout, if you are curious</a></li></ol></nav>
+<h2 id="two-rules-carry-the-whole-design">Two rules carry the whole design</h2>
+<p><strong>Line-oriented.</strong> Every construct is one line beginning with a keyword. Indentation is decorative and means nothing. A file that is mis-indented — the most common way a generated file goes wrong — still parses exactly the same.</p>
+<p><strong>Context-scoped.</strong> A declaration opens a scope; the attribute lines after it attach to that scope until the next declaration. Attribute keywords are checked against the open scope, so a misplaced line is a precise error instead of data that silently vanishes.</p>
+<p>The one exception to the first rule is the block scalar, <code>&gt;</code> and <code>|</code>, where indentation delimits the block. Prose has to span lines somehow, and this follows YAML's convention so it reads the way you expect.</p>
+<h2 id="the-whole-language-on-one-screen">The whole language, on one screen</h2>
+<pre><code># comments are whole-line only
+
+blueprint payments-platform
+  title    The Payment Path
+  tagline  what happens between a card tap and a settled ledger row
+  branch   main
+  stamp    v4.2.0
+
+stat Services = 11 · 3 languages
+stat Peak     = 4,200 req/s
+
+group edge "The edge"
+  note everything before the request is ours
+
+lb ingress "Load balancer" x1.2
+  is    terminates TLS and picks a healthy checkout instance
+  why &gt;
+    Two of them, one per zone, sharing a floating address. Health checks
+    are shallow on purpose — a deep check took the whole pool down in
+    March when the ledger was slow.
+  src   infra/nginx/
+  uses  nginx
+  num   Zones = 2
+
+group core "Core"
+
+svc checkout "Checkout" x1.5
+  is   turns a cart into an authorised payment
+  why  Owns the state machine. Every transition is written before the
+       call that causes it, so a crash mid-flight is recoverable.
+  src  services/checkout/
+
+db orders "Orders" x1.4
+  is    the ledger — every authorisation, capture and refund
+  why &gt;
+    Postgres, single writer, replicas for reads. It is the only store
+    in the system that is allowed to be the source of truth.
+  fact  Engine  = Postgres 16
+  fact  Region  = us-east-1
+  fact  Backups = PITR, 7 days
+  list  Tables  = orders, order_items, captures, refunds
+  list  Indexes = orders_customer_idx, orders_created_at_idx
+  link  Runbook = https://wiki/runbooks/orders-db
+  env   DATABASE_URL PGBOUNCER_HOST
+
+topic settlements "Settlements" !planned
+  is   the queue the ledger writes to and settlement reads from
+  why  Not built yet. Settlement polls the table directly today, which is
+       the reason the nightly job takes nineteen minutes.
+
+# ------------------------------------------------------------------
+# connections
+# ------------------------------------------------------------------
+
+ingress -call-&gt; checkout "a tap"
+  carry POST /v1/checkout {cart_id, payment_method}
+  why   The only inbound path. A 5xx here is the one alert that pages.
+  vol   0.9
+
+checkout -write-&gt; orders "the authorisation"
+  carry INSERT INTO orders (id, cart_id, state, amount_cents)
+  why &gt;
+    Written before the processor is called, never after. If the process
+    dies between the two, a reconciliation job finds the orphan by state.
+  vol   0.8
+
+# ------------------------------------------------------------------
+# narrative
+# ------------------------------------------------------------------
+
+tab what "What it does"
+  h  The Payment Path
+  p &gt;
+    A card tap arrives at [[the load balancer|ingress]] and leaves as a row
+    in [[the ledger|orders]]. Everything between is one {{state machine}}.
+  note Hover a block for what it is. Click one for everything about it.
+  code |
+    curl -XPOST https://api/v1/checkout -d @cart.json
+
+term "state machine" = a set of named states and the legal moves between them</code></pre>
+<h2 id="the-shape-table">The shape table</h2>
+<p><code>kind</code> decides the geometry. There are eight shapes and that is the whole visual vocabulary — learn them once and every blueprint anyone writes is readable. What varies is the <em>word</em> you use: many domain words alias onto each shape, so you can call a thing what it actually is.</p>
+<div class="scroll"><table>
+<thead><tr><th>shape</th><th>drawn as</th><th>reads as</th><th>write it as</th></tr></thead>
+<tbody><tr><td>entrypoint</td><td>tall narrow prism</td><td>a way in</td><td><code>entry</code> <code>lb</code> <code>ingress</code> <code>gateway</code> <code>cli</code> <code>endpoint</code></td></tr><tr><td>service</td><td>cube, vertical hatch</td><td>a thing that does work</td><td><code>svc</code> <code>server</code> <code>api</code> <code>app</code> <code>worker</code> <code>lambda</code> <code>module</code></td></tr><tr><td>store</td><td>wide laminated slab</td><td>a place data rests</td><td><code>store</code> <code>db</code> <code>postgres</code> <code>mysql</code> <code>sqlite</code> <code>cache</code> <code>redis</code> <code>bucket</code> <code>s3</code> <code>blob</code> <code>volume</code> <code>index</code> <code>table</code></td></tr><tr><td>queue</td><td>ribbed stack of plates</td><td>a place work waits</td><td><code>queue</code> <code>topic</code> <code>stream</code> <code>channel</code> <code>buffer</code> <code>bus</code> <code>kafka</code> <code>pubsub</code> <code>mailbox</code></td></tr><tr><td>model</td><td>cube with a dot</td><td>a call to a model</td><td><code>model</code> <code>llm</code> <code>inference</code> <code>agent</code></td></tr><tr><td>library</td><td>low flat plate</td><td>shared code or contract</td><td><code>lib</code> <code>pkg</code> <code>crate</code> <code>schema</code> <code>config</code> <code>contract</code></td></tr><tr><td>external</td><td>ghost box, no fill</td><td>not yours</td><td><code>ext</code> <code>saas</code> <code>vendor</code> <code>client</code> <code>browser</code> <code>mobile</code> <code>user</code> <code>cdn</code></td></tr><tr><td>job</td><td>small cube on a stem</td><td>runs on its own clock</td><td><code>job</code> <code>cron</code> <code>timer</code> <code>scheduler</code> <code>batch</code> <code>task</code></td></tr></tbody>
+</table></div>
+<p>Pick the shape a reader recognises, not the one that is most technically precise. Redis used only as a job queue is a <code>topic</code>, not a <code>cache</code>.</p>
+<p><strong>Modifiers</strong>, in any order after the label:</p>
+<ul>
+<li><code>x1.4</code> — visual weight, 0.5 to 2.0. Raise it for the two or three blocks that dominate. If everything is heavy, nothing is.</li>
+<li><code>@4,-2</code> — manual grid position. Reach for it after you have seen the render, never while writing.</li>
+<li><code>!dormant</code> — faded, for code that exists but is not switched on. <code>!planned</code> — a ghost outline, for what is coming. Default is active.</li>
+</ul>
+<h2 id="the-line-table">The line table</h2>
+<div class="scroll"><table>
+<thead><tr><th>kind</th><th>drawn as</th><th>use it for</th></tr></thead>
+<tbody><tr><td><code>-data-&gt;</code></td><td>solid hairline</td><td>a value moves from one place to another</td></tr><tr><td><code>-call-&gt;</code></td><td>solid with arrowhead</td><td>A invokes B and waits</td></tr><tr><td><code>-event-&gt;</code></td><td>dashed</td><td>fire-and-forget, pub/sub, webhooks</td></tr><tr><td><code>-read-&gt;</code></td><td>fine dotted</td><td>A reads state B owns</td></tr><tr><td><code>-write-&gt;</code></td><td>double solid, arrowhead</td><td>A mutates state B owns</td></tr><tr><td><code>-spawn-&gt;</code></td><td>sparse dotted</td><td>A creates or launches B</td></tr></tbody>
+</table></div>
+<p>Write <code>&lt;-call-&gt;</code> for bidirectional; it changes the hover card's arrow, not the line. <code>vol</code> (0 to 1) sets packet density and speed — the only way the drawing shows where the hot path is, so spend it. A connection's id is derived as <code>from__to</code>; override it with <code>as</code> only when you need to.</p>
+<h2 id="attributes-by-scope">Attributes by scope</h2>
+<div class="scroll"><table>
+<thead><tr><th>scope</th><th>keywords</th></tr></thead>
+<tbody><tr><td><code>blueprint</code></td><td><code>title</code> <code>tagline</code> <code>branch</code> <code>stamp</code></td></tr><tr><td>top level</td><td><code>stat &lt;label&gt; = &lt;value&gt;</code></td></tr><tr><td><code>group</code></td><td><code>note</code></td></tr><tr><td>node</td><td><code>is</code> <code>why</code> <code>src</code> <code>uses</code> <code>num</code> <code>fact</code> <code>list</code> <code>link</code> <code>env</code></td></tr><tr><td>connection</td><td><code>carry</code> <code>why</code> <code>vol</code> <code>as</code> <code>via</code></td></tr><tr><td><code>tab</code></td><td><code>h</code> <code>p</code> <code>note</code> <code>code</code> <code>---</code></td></tr></tbody>
+</table></div>
+<p><strong><code>is</code></strong> is one clause, under 90 characters — what it is, not what it is for. <strong><code>why</code></strong> is 2–4 sentences: what it does, roughly how, and one thing a reader would not have guessed. That last sentence is what makes a hover card worth opening.</p>
+<p><strong><code>carry</code></strong> is the hard one. Every connection must name something concrete — a type signature, a function, an SQL table, an HTTP route, a topic. If you cannot name what crosses the line, the line is not real; delete it. This rule exists because the failure mode of generated architecture diagrams is boxes joined by vibes.</p>
+<h2 id="the-inspector">The inspector</h2>
+<p>Hovering shows a quick card. <strong>Clicking pins a full inspector</strong> in the right panel, and that is where <code>fact</code>, <code>list</code>, <code>link</code> and <code>env</code> land — alongside the source paths, the tech chips, and every connection in and out, each one clickable to walk the graph.</p>
+<pre><code>db orders "Orders"
+  fact Engine  = Postgres 16          →  a labelled row
+  list Tables  = orders, refunds      →  chips
+  link Runbook = https://…            →  a clickable row
+  env  DATABASE_URL PGBOUNCER_HOST    →  chips
+  num  Rows    = 4.2M                 →  a headline number on the hover card</code></pre>
+<p><code>num</code> and <code>fact</code> share a syntax and differ in destination: <code>num</code> is one of the up-to-four headline numbers on the hover card, <code>fact</code> is an inspector row. All of them repeat.</p>
+<h2 id="prose-values">Prose values</h2>
+<p>An attribute value runs to the end of its line. For anything longer, end the line with a block marker:</p>
+<ul>
+<li><code>&gt;</code> <strong>folded</strong> — following lines are joined with spaces; a blank line becomes a paragraph break. Use this for all prose.</li>
+<li><code>|</code> <strong>literal</strong> — newlines preserved. Use this for <code>code</code>.</li>
+</ul>
+<p>A block ends at the first line indented no further than the line that opened it, or at end of file.</p>
+<p>Two inline markups work inside any prose, and nothing else does:</p>
+<ul>
+<li><code>[[display text|node_id]]</code> — a highlighted phrase wired to a block. Hover either and the other lights up; click to fly there and open the inspector. Six to twelve across a narrative is about right.</li>
+<li><code>{{term}}</code> — dotted underline, definition on hover. Must have a matching <code>term "…" = …</code> declaration.</li>
+</ul>
+<p>Markdown does not work. HTML is escaped.</p>
+<h2 id="errors-and-warnings">Errors and warnings</h2>
+<p><code>bp check</code> splits its findings in two, and the split is the point.</p>
+<p><strong>Errors</strong> block a build: an unknown enum value, a connection to a block that does not exist, a duplicate id, a <code>[[…|id]]</code> pointing at nothing, a missing required field, a length out of range. Every one carries a line, a column, and the offending source line with a caret under it.</p>
+<p><strong>Warnings</strong> never block, and each is a thing that makes a blueprint worse to read: fewer than 15 or more than 40 blocks, a block nothing connects to, a vague <code>carry</code> like "data", a one-sentence <code>why</code>, marketing language in the tagline, two connections running the same direction between the same pair, fewer than three narrative links.</p>
+<p><code>--force</code> builds anyway. The app is more forgiving still: a file that stops parsing keeps the last good drawing on screen with the errors over it, because blanking the window on every half-typed line makes a live-reload loop useless.</p>
+<h2 id="what-you-do-not-control">What you do not control</h2>
+<p>Positions, colours, fonts, hatching, line routing, camera angle, animation, panel layout, label placement. All fixed, identical for every blueprint, and fully deterministic — no <code>Math.random</code>, no clock-seeded values. The same file always produces the same drawing, so you can change one block, save, and see exactly what moved.</p>
+<h2 id="layout-if-you-are-curious">Layout, if you are curious</h2>
+<ol>
+<li>Blocks are ranked by longest path through the whole graph. Cycles are handled by bounding the relaxation passes rather than detecting them.</li>
+<li>Inside a group, the <em>distinct</em> ranks its members occupy are renumbered <code>0,1,2…</code>, so a group's plot is compact regardless of where it sits globally.</li>
+<li>Same-rank blocks stack front-to-back, centred in the plot.</li>
+<li>Group plots are packed in projected coordinates (<code>u = col − row</code>, <code>v = col + row</code>) rather than on the floor grid. Packing on the floor leaves voids that grow with each plot's depth, and turns the drawing into a thin diagonal streak with two empty corners.</li>
+<li><code>@col,row</code> overrides all of it.</li>
+</ol>
+  </article>
+  <footer class="pagefoot">
+    <p>This page is also served as raw markdown at
+         <a href="https://gridwillow.com/docs/language.md"><code>/docs/language.md</code></a>.</p>
+    <p>Every document on this site is indexed in
+       <a href="/llms.txt"><code>/llms.txt</code></a> and concatenated into one
+       file at <a href="/llms-full.txt"><code>/llms-full.txt</code></a>.</p>
+  </footer>
+</main>
+</body>
+</html>

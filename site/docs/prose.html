@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing the prose — Gridwillow</title>
+<meta name="description" content="How to write `is`, `why` and `carry` so the hover cards are worth opening. The default register of generated documentation is the wrong one here, and this page is about correcting it.">
+<link rel="canonical" href="https://gridwillow.com/docs/prose">
+<link rel="alternate" type="text/markdown" href="https://gridwillow.com/docs/prose.md" title="Writing the prose as markdown">
+<meta property="og:title" content="Writing the prose — Gridwillow">
+<meta property="og:description" content="How to write `is`, `why` and `carry` so the hover cards are worth opening. The default register of generated documentation is the wrong one here, and this page is about correcting it.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gridwillow.com/docs/prose">
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+<header class="bar">
+  <a class="word" href="/">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#111"/>
+      <path d="M8 19l8-4.5 8 4.5-8 4.5z" fill="#cdc499"/>
+      <path d="M8 19v-4l8-4.5 8 4.5v4" fill="none" stroke="#cdc499" stroke-width="1.6"/>
+    </svg>
+    Gridwillow
+  </a>
+  <nav class="barlinks">
+    <a href="/docs/">Docs</a>
+    <a href="/llms.txt">llms.txt</a>
+    <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
+  </nav>
+</header>
+
+<main>
+  <p class="crumb"><a href="/docs/">Documentation</a></p>
+  <article>
+<h1 id="voice">Voice</h1>
+<p>The prose is most of the value. A blueprint whose blocks are labelled correctly and whose hover cards say nothing is a worse artifact than a whiteboard photo, because it looks authoritative.</p>
+<p>The default register for generated documentation is wrong for this. Correct it deliberately.</p>
+<nav class="toc" aria-label="On this page"><b>On this page</b><ol><li><a href="#who-you-are-writing-for">Who you are writing for</a></li><li><a href="#the-one-test-that-matters">The one test that matters</a></li><li><a href="#register">Register</a></li><li><a href="#never-write">Never write</a></li><li><a href="#field-by-field">Field by field</a></li><li><a href="#the-narrative-panel">The narrative panel</a></li><li><a href="#links">Links</a></li><li><a href="#glossary">Glossary</a></li></ol></nav>
+<h2 id="who-you-are-writing-for">Who you are writing for</h2>
+<p>A competent engineer who has never seen this system and has about four minutes. They can read code. They cannot yet tell which parts matter, which decisions were forced, and which things will bite them.</p>
+<p>Write the way you would explain it to a colleague at a whiteboard, out loud.</p>
+<h2 id="the-one-test-that-matters">The one test that matters</h2>
+<p><strong>Every <code>why</code> ends with something the reader would not have guessed from the name.</strong> That last sentence is the entire reason to open a hover card.</p>
+<p>Not guessable:</p>
+<p>&gt; Health checks are shallow on purpose: a deep check that touched the ledger &gt; took the whole pool down in March when a slow query made every instance look &gt; sick.</p>
+<p>Guessable, therefore worthless:</p>
+<p>&gt; The load balancer distributes traffic across healthy instances for high &gt; availability and reliability.</p>
+<p>If you cannot find the non-obvious sentence, you have not read enough of the code yet. Go back rather than padding.</p>
+<h2 id="register">Register</h2>
+<p>Short declaratives. Concrete nouns. Say the surprising thing plainly instead of building up to it. Contractions are fine. Semicolons are fine.</p>
+<p>Match this:</p>
+<p>&gt; The diagram is a loop because the system is: one archive → pick a parent → &gt; write a new doctrine → play it → rate it → file it → back to the archive. &gt; Everything below the loop is the game itself: the Rust engine sits beside it, &gt; finished and not switched on.</p>
+<h2 id="never-write">Never write</h2>
+<ul>
+<li>Marketing adjectives: powerful, seamless, robust, scalable, cutting-edge, state-of-the-art, best-in-class, enterprise-grade. The checker warns on some of these in the tagline; it cannot catch them everywhere.</li>
+<li>"Responsible for", "handles", "manages", "facilitates", "leverages", "utilises". Say what it does.</li>
+<li>Bullet lists of features inside a <code>why</code>.</li>
+<li>A restatement of the block's own label. <code>is</code> on a block called Load Balancer should not begin "load balances".</li>
+<li>Hedging you do not mean. "May potentially" is two hedges for no reason.</li>
+<li>Anything you would not say out loud to a colleague.</li>
+</ul>
+<h2 id="field-by-field">Field by field</h2>
+<p><strong><code>title</code></strong> — what the system <em>is</em>, not what the repo is called. <code>metalcraft-agent</code> → "The Pod". <code>payments-platform</code> → "The Payment Path".</p>
+<p><strong><code>tagline</code></strong> — one lowercase sentence, no full stop needed. What it does. <code>one rust binary that runs an agent as a scoped persona, on a box you own</code></p>
+<p><strong><code>stat</code></strong> — facts a reader could not guess, and that reveal <em>shape</em> rather than size. "582 distinct doctrines" is a stat. "47 source files" is not.</p>
+<p><strong><code>is</code></strong> — one clause, what it <em>is</em>, not what it is for. "the ledger — every authorisation, capture and refund ever taken", not "handles order persistence".</p>
+<p><strong><code>why</code></strong> — 2–4 sentences. What it does, roughly how, then the non-obvious thing. Do not open with "This module".</p>
+<p><strong>connection <code>carry</code></strong> — the concrete thing, written for a human to read: <code>INSERT INTO orders (id, cart_id, state, amount_cents)</code>, <code>POST /v1/checkout {cart_id, payment_method}</code>, <code>AppContext { SqliteStore, BlobStore, OwnerIdentity }</code>.</p>
+<p><strong>connection <code>why</code></strong> — when it fires, what it carries, and what failure looks like. The failure sentence is the one people remember.</p>
+<p>&gt; Written before the processor is called, never after. If the process dies &gt; between the two, the reconciler finds the orphan by its state.</p>
+<h2 id="the-narrative-panel">The narrative panel</h2>
+<p>Two tabs. The first says what the system does and why it is shaped this way. The second says how it is built and what was traded away.</p>
+<p>Structure that works:</p>
+<ol>
+<li><code>h</code> — the title again, then a paragraph that gets a stranger oriented in three sentences.</li>
+<li>The organising idea. Every system has one; find it and name it.</li>
+<li><code>note</code> — a short aside telling the reader how to use the drawing.</li>
+<li>The rule or invariant the whole thing rests on, and what breaks without it.</li>
+<li>In the second tab: the dependencies you did not write, the extension seam, the determinism or consistency story, and <strong>what is deliberately missing</strong>.</li>
+</ol>
+<p>That last section is the most valuable and the most often skipped. Write down the gaps — no service mesh, no fallback provider, no cross-region reads — with one clause on why each was cheaper to live with than to run. It stops the next person having to work out whether it was an oversight.</p>
+<p>Close with a paragraph on where the file lives, so a reader who spots something wrong knows what to edit.</p>
+<h2 id="links">Links</h2>
+<p>Use 6–12 <code>[[phrase|block_id]]</code> links across the panel. Link the phrase that names the thing, not a bare noun:</p>
+<ul>
+<li>Good: <code>[[a named, scoped tool set|persona_store]]</code></li>
+<li>Good: <code>[[the load balancer|ingress]]</code></li>
+<li>Weak: <code>[[it|ingress]]</code></li>
+</ul>
+<p>Do not link the same block five times. Do not link every block — a panel where everything is highlighted has highlighted nothing.</p>
+<h2 id="glossary">Glossary</h2>
+<p>Use <code>{{term}}</code> for words a competent engineer outside this domain would not know, and define them in one sentence without jargon. Two or three per blueprint is plenty. Do not define words the reader obviously knows.</p>
+  </article>
+  <footer class="pagefoot">
+    <p>This page is also served as raw markdown at
+         <a href="https://gridwillow.com/docs/prose.md"><code>/docs/prose.md</code></a>.</p>
+    <p>Every document on this site is indexed in
+       <a href="/llms.txt"><code>/llms.txt</code></a> and concatenated into one
+       file at <a href="/llms-full.txt"><code>/llms-full.txt</code></a>.</p>
+  </footer>
+</main>
+</body>
+</html>

@@ -100,6 +100,16 @@ Code both discover:
 The compiler is the grader — the skill is told to run `bp check` and fix what it
 reports, so what comes back compiles.
 
+Nothing needs installing if your agent can fetch a URL. Everything the skills
+know is published at [gridwillow.com/llms-full.txt](https://gridwillow.com/llms-full.txt)
+— the language reference, the procedure, the prose guide, the grammar and a
+worked example, in one file:
+
+```
+> read https://gridwillow.com/llms-full.txt, then map this repo
+  out as a gridwillow blueprint and run bp check until it passes
+```
+
 ## What you get
 
 - **An isometric field of extruded blocks.** Eight shapes, closed set — but many
@@ -242,13 +252,44 @@ there is one renderer and it cannot drift from what `bp export` produces.
 
 ## The site
 
-`site/` is gridwillow.com: one static page, one exported blueprint running live in
-the hero, and a dependency-free Node server so Railway can boot it with no install
-step.
+`site/` is gridwillow.com: a landing page, one exported blueprint running live in
+the hero, the documentation, and a dependency-free Node server so Railway can boot
+it with no install step.
 
 ```bash
 cd site && npm start        # http://localhost:3000
 ```
+
+### Documentation, for people and for agents
+
+Gridwillow is meant to be written by a coding agent, so the site is built to be
+read by one. Every reference document is served twice — as a page, and as raw
+markdown at the same URL with `.md` appended:
+
+| URL | what it is |
+|---|---|
+| `/llms.txt` | the index: every document, with a sentence on what it answers |
+| `/llms-full.txt` | all of them concatenated — one fetch, enough to write a `.bp` that compiles |
+| `/docs/` `/docs/language` … | the pages; each links its markdown twin at the foot |
+| `/docs/language.md` … | the markdown twins |
+| `/docs/grammar.ebnf` `/examples/payments.bp` | grammar, schema and worked examples, verbatim |
+
+A client that sends `Accept: text/markdown` (and does not ask for HTML) gets the
+markdown twin of whatever page it requested; `Accept: */*` gets the HTML, so curl
+and naive fetchers see what a browser sees. HTML responses carry a `Link:
+rel="alternate"` header pointing at the twin.
+
+Railway builds `site/` in isolation and cannot see `PROTOCOL.md` or `skills/`, so
+those copies live inside `site/` and are generated and committed:
+
+```bash
+npm run sync:site      # regenerate site/docs, llms.txt, llms-full.txt, sitemap.xml
+npm run check:site     # exit 1 if any of it is stale — worth a CI step
+```
+
+Edit the source of record (`PROTOCOL.md`, `skills/**`, `spec/**`, `examples/**`),
+run `sync:site`, commit both. `scripts/sync-site-docs.mjs` holds the manifest of
+what is published and the small markdown renderer that makes the HTML twins.
 
 ### Deploying it
 
@@ -267,9 +308,9 @@ like `gridwillow.com` needs a provider that flattens CNAMEs at the root —
 Cloudflare, DNSimple, Namecheap and bunny.net all do; a plain A record will not
 work.
 
-`site/payments.blueprint.html` is the one build artifact in version control —
-Railway builds `site/` alone and has no Rust toolchain to regenerate it. After
-editing the sample, rebuild it and commit:
+`site/payments.blueprint.html` is the one build artifact in version control that
+needs a Rust toolchain — Railway builds `site/` alone and has none. After editing
+the sample, rebuild it and commit:
 
 ```bash
 bp export examples/payments.bp -o site/payments.blueprint.html

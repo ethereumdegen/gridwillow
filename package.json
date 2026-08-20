@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "shoot": "node scripts/shoot.mjs",
-    "check:visual": "node scripts/shoot.mjs examples/payments.bp --check && node scripts/shoot.mjs examples/metalcraft-agent.bp --check"
+    "check:visual": "node scripts/shoot.mjs examples/payments.bp --check && node scripts/shoot.mjs examples/metalcraft-agent.bp --check",
+    "sync:site": "node scripts/sync-site-docs.mjs",
+    "check:site": "node scripts/sync-site-docs.mjs --check"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

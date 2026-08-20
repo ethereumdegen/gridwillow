@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keeping a blueprint true — Gridwillow</title>
+<meta name="description" content="Use when a .bp blueprint already exists and the code has moved on — to check it for drift, or after a refactor, a migration, or a new service. Verifies every claim in the file against the repository and repairs what has gone stale.">
+<link rel="canonical" href="https://gridwillow.com/docs/keeping-it-true">
+<link rel="alternate" type="text/markdown" href="https://gridwillow.com/docs/keeping-it-true.md" title="Keeping a blueprint true as markdown">
+<meta property="og:title" content="Keeping a blueprint true — Gridwillow">
+<meta property="og:description" content="Use when a .bp blueprint already exists and the code has moved on — to check it for drift, or after a refactor, a migration, or a new service. Verifies every claim in the file against the repository and repairs what has gone stale.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gridwillow.com/docs/keeping-it-true">
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+<header class="bar">
+  <a class="word" href="/">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#111"/>
+      <path d="M8 19l8-4.5 8 4.5-8 4.5z" fill="#cdc499"/>
+      <path d="M8 19v-4l8-4.5 8 4.5v4" fill="none" stroke="#cdc499" stroke-width="1.6"/>
+    </svg>
+    Gridwillow
+  </a>
+  <nav class="barlinks">
+    <a href="/docs/">Docs</a>
+    <a href="/llms.txt">llms.txt</a>
+    <a href="https://github.com/ethereumdegen/gridwillow">GitHub&nbsp;↗</a>
+  </nav>
+</header>
+
+<main>
+  <p class="crumb"><a href="/docs/">Documentation</a></p>
+  <article>
+<h1 id="refresh-a-blueprint">Refresh a blueprint</h1>
+<p>A blueprint that is quietly wrong is worse than no blueprint, because it looks authoritative. This skill checks an existing <code>.bp</code> against the code it claims to describe and repairs the drift.</p>
+<p>Use <code>gridwillow-blueprint</code> to write one from scratch; use this one when the file already exists.</p>
+<nav class="toc" aria-label="On this page"><b>On this page</b><ol><li><a href="#start-with-the-machine-checks">Start with the machine checks</a></li><li><a href="#then-verify-the-claims-cheapest-first">Then verify the claims, cheapest first</a></li><li><a href="#then-look-for-what-is-missing">Then look for what is missing</a></li><li><a href="#repair-and-keep-the-prose">Repair, and keep the prose</a></li><li><a href="#check-the-block-count-has-not-drifted-either">Check the block count has not drifted either</a></li><li><a href="#finish">Finish</a></li></ol></nav>
+<h2 id="start-with-the-machine-checks">Start with the machine checks</h2>
+<pre class="lang-sh"><code>bp check &lt;name&gt;.bp</code></pre>
+<p>Everything it reports is real. Fix the errors first — a file that does not compile cannot be reasoned about. Then read the warnings; most are right.</p>
+<p><code>bp check</code> cannot see whether the file is <em>true</em>, which is what the rest of this is for.</p>
+<h2 id="then-verify-the-claims-cheapest-first">Then verify the claims, cheapest first</h2>
+<p><strong>Paths.</strong> Every <code>src</code> entry must still exist. This is the fastest and most common drift — a rename moves a module and no one updates the drawing.</p>
+<pre class="lang-sh"><code>grep -oE '^\s*src .*' &lt;name&gt;.bp | tr -s ' ' '\n' | grep -v '^src$' | sort -u</code></pre>
+<p>Check each with <code>glob</code>. A path that has moved usually means the block's <code>why</code> is stale too — look before you just repoint it.</p>
+<p><strong>Payloads.</strong> Every <code>carry</code> names something concrete: a function, a type, a table, a route. Confirm each still exists and still means what the line says. <code>lsp</code> for symbols, <code>grep</code> for routes and SQL. A <code>carry</code> naming a function that was deleted is the single most misleading thing a blueprint can contain.</p>
+<p><strong>Facts.</strong> Versions, replica counts, timeouts, schedules, retention windows. These rot silently. Check them against the manifest, the deployment config, and the migrations — not against the last blueprint.</p>
+<p><strong>Table and index lists.</strong> Compare <code>list Tables</code> against the migrations directory. New tables are the clearest signal that a subsystem grew and its <code>why</code> no longer covers what it does.</p>
+<p><strong>Environment variables.</strong> Compare <code>env</code> against <code>.env.example</code>, the compose file, and the deployment config.</p>
+<h2 id="then-look-for-what-is-missing">Then look for what is missing</h2>
+<p>Drift is rarely only decay; usually something was added.</p>
+<ul>
+<li>New entrypoints, new binaries, new top-level directories since the blueprint's <code>stamp</code>. <code>git log --diff-filter=A --name-only</code> since that point is a fast way to see what appeared.</li>
+<li>New services in the compose or deployment files.</li>
+<li>A directory that has grown enough to deserve its own block — or two blocks that have collapsed into one thing and should be merged.</li>
+<li>Blocks marked <code>!planned</code> that have since shipped, and blocks that are now <code>!dormant</code>.</li>
+</ul>
+<p>Adding a block means checking every connection that should now terminate on it. This is the step people skip, and it is why refreshed blueprints tend to grow islands.</p>
+<h2 id="repair-and-keep-the-prose">Repair, and keep the prose</h2>
+<p>The prose is the expensive part. Do not rewrite a <code>why</code> that is still true just because you are editing the block. Change the sentence that is wrong and leave the rest.</p>
+<p>When a subsystem has genuinely changed shape, rewrite the whole <code>why</code> properly — including the closing non-obvious sentence. A half-updated paragraph reads worse than either version. See <code>../gridwillow-blueprint/reference/voice.md</code>.</p>
+<p>Update <code>stamp</code> to the version or date you verified against. That is what the next refresh will diff from.</p>
+<h2 id="check-the-block-count-has-not-drifted-either">Check the block count has not drifted either</h2>
+<p>15–40 is the readable band. A blueprint that has grown to 50 needs leaf blocks folded into their parents, not a bigger screen. One that has shrunk to 12 has usually lost detail rather than complexity.</p>
+<h2 id="finish">Finish</h2>
+<pre class="lang-sh"><code>bp check &lt;name&gt;.bp
+bp export &lt;name&gt;.bp</code></pre>
+<p>Then tell the human what actually changed, in a short list — not what you verified, what moved. "The settlement worker now writes to S3 before the acquirer, and three tables were added to the ledger" is the useful report. Mention anything you found in the code that looked wrong rather than merely undocumented; a blueprint refresh is one of the few times somebody reads a whole system on purpose.</p>
+  </article>
+  <footer class="pagefoot">
+    <p>This page is also served as raw markdown at
+         <a href="https://gridwillow.com/docs/keeping-it-true.md"><code>/docs/keeping-it-true.md</code></a>.</p>
+    <p>Every document on this site is indexed in
+       <a href="/llms.txt"><code>/llms.txt</code></a> and concatenated into one
+       file at <a href="/llms-full.txt"><code>/llms-full.txt</code></a>.</p>
+  </footer>
+</main>
+</body>
+</html>

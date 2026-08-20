@@ -1,0 +1,58 @@
+# Gridwillow
+
+> A text language for software architecture. You write one `.bp` file naming a
+> system's services, stores, queues and the data that moves between them; the
+> Rust compiler renders it as an interactive isometric blueprint — one
+> self-contained HTML file, with a hover card on every block and an inspector
+> behind each one. Think Mermaid, for infrastructure, in three dimensions.
+
+Gridwillow is built to be written by a coding agent pointed at a repository. Two
+rules carry the design: every construct is one line beginning with a keyword,
+and indentation is decorative — so a mis-indented generated file still parses
+exactly the same. Every connection must name something concrete that crosses it
+(a table, a route, a function, a type) or the checker rejects it. That rule is
+what stops a generated architecture diagram from becoming boxes joined by vibes.
+
+If you are going to read one file, read /llms-full.txt: it is every document
+below, concatenated, and it is enough to write a blueprint that compiles.
+
+## Start here
+
+- [The .bp language](https://gridwillow.com/docs/language.md): The complete language reference — the two rules, the whole syntax on one screen, the eight-shape table, the six connection kinds, every attribute by scope, prose blocks and inline markup, and what the checker treats as an error versus a warning. Read this one first.
+- [Writing a blueprint](https://gridwillow.com/docs/writing-a-blueprint.md): The procedure to follow against a real codebase: survey before writing anything, choose 15–40 subsystem blocks, trace only the connections you can name, then let `bp check` grade the result.
+- [Writing the prose](https://gridwillow.com/docs/prose.md): How to write `is`, `why` and `carry` so the hover cards are worth opening. The default register of generated documentation is the wrong one here, and this page is about correcting it.
+- [Keeping a blueprint true](https://gridwillow.com/docs/keeping-it-true.md): The procedure for re-checking an existing blueprint against the code it claims to describe — moved paths, deleted functions, new tables — and rewriting only what actually drifted.
+
+## Grammar and examples
+
+- [/docs/grammar.ebnf](https://gridwillow.com/docs/grammar.ebnf): The formal grammar, in EBNF. The normative answer when the prose reference and your parser disagree.
+- [/docs/blueprint-ir.schema.json](https://gridwillow.com/docs/blueprint-ir.schema.json): JSON Schema for the compiled intermediate form the renderer consumes. You never write this by hand; `bp build` emits it.
+- [/examples/payments.bp](https://gridwillow.com/examples/payments.bp): A complete, checked blueprint of a payments platform — 16 blocks, 19 connections, groups, tabs and terms. The worked example, and the file rendered on the front page.
+- [/examples/self.bp](https://gridwillow.com/examples/self.bp): Gridwillow’s own architecture as a blueprint — the compiler, the renderer and the app, drawn in their own language.
+
+## Using it
+
+```
+cargo install --path crates/gridwillow-cli   # the `bp` binary, from a clone
+
+bp check  infra.bp                # every problem at once, with line and column
+bp build  infra.bp -o infra.json  # the compiled IR
+bp fmt    infra.bp --write        # canonical formatting, in place
+bp export infra.bp -o infra.html  # one self-contained HTML file
+```
+
+`--force` builds or exports anyway when there are errors. The desktop app
+(`cd app && cargo tauri dev`) redraws on every save.
+
+The compiler is the grader. `bp check` splits its findings in two: errors block
+a build (a connection to a block that does not exist, a dangling `[[…|id]]`, a
+duplicate id, a value out of range), and warnings never do but each names a way
+the drawing is worse to read (fewer than 15 or more than 40 blocks, a block
+nothing connects to, a vague `carry` like "data", a one-sentence `why`).
+Write, run `bp check`, fix what it reports, repeat.
+
+## Optional
+
+- [Source, issues and releases](https://github.com/ethereumdegen/gridwillow): the repository. MIT licensed; the compiler is Rust, the renderer is three.js, and there are no runtime dependencies.
+- [Agent skills](https://github.com/ethereumdegen/gridwillow/tree/main/skills): `SKILL.md` files in the format Claude Code and OMP both discover. `./skills/install.sh claude` symlinks them into `~/.claude/skills/`; the same two documents are served here as /docs/writing-a-blueprint.md and /docs/keeping-it-true.md.
+- [A rendered blueprint](https://gridwillow.com/payments.blueprint.html): the compiled output of examples/payments.bp. About a megabyte of generated three.js scene — worth opening in a browser, not worth fetching as text.
